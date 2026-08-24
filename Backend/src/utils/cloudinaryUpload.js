@@ -1,9 +1,56 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Blob } from 'node:buffer';
 import { env } from '../config/env.js';
 import { ApiError } from './ApiError.js';
 
 const DATA_URL_PATTERN = /^data:([^;]+);base64,(.+)$/;
+
+const UPLOADS_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../uploads');
+
+const isCloudinaryConfigured = () =>
+  Boolean(env.cloudinary.cloudName && env.cloudinary.apiKey && env.cloudinary.apiSecret);
+
+// Keep folder/publicId from escaping the uploads root via '..' or absolute paths.
+const sanitizeSegment = (value = '') =>
+  String(value)
+    .split('/')
+    .map((part) => part.replace(/[^a-zA-Z0-9_-]/g, ''))
+    .filter(Boolean)
+    .join('/');
+
+/**
+ * Disk fallback used when Cloudinary is not configured. Writes under Backend/uploads
+ * and returns the same shape as the Cloudinary helpers, so callers need no branching.
+ * Files are served by the `/uploads` static mount in app.js.
+ */
+const storeBufferLocally = async ({ buffer, folder, publicId, extension, mimeType, resourceType = 'image' }) => {
+  const safeFolder = sanitizeSegment(folder) || 'general';
+  const safeExtension = sanitizeSegment(extension) || 'bin';
+  const safePublicId = sanitizeSegment(publicId) || `upload-${Date.now()}`;
+  const targetDir = path.join(UPLOADS_ROOT, safeFolder);
+
+  await fs.mkdir(targetDir, { recursive: true });
+
+  const fileName = `${safePublicId}.${safeExtension}`;
+  await fs.writeFile(path.join(targetDir, fileName), buffer);
+
+  const relativeUrl = `/uploads/${safeFolder}/${fileName}`;
+  const base = String(env.publicBackendUrl || '').replace(/\/+$/, '');
+
+  return {
+    secureUrl: base ? `${base}${relativeUrl}` : relativeUrl,
+    publicId: `${safeFolder}/${safePublicId}`,
+    resourceType,
+    format: safeExtension,
+    bytes: buffer.length,
+    mimeType,
+    storage: 'local',
+    raw: { storage: 'local', path: relativeUrl },
+  };
+};
 
 const parseDataUrl = (dataUrl) => {
   const match = String(dataUrl || '').match(DATA_URL_PATTERN);
@@ -39,14 +86,14 @@ export const uploadDataUrlToCloudinary = async ({
   publicIdPrefix = 'driver-document',
   publicIdSuffix = '',
 }) => {
-  if (!env.cloudinary.cloudName || !env.cloudinary.apiKey || !env.cloudinary.apiSecret) {
-    throw new ApiError(500, 'Cloudinary credentials are not configured');
-  }
-
   const { mimeType, base64, extension } = parseDataUrl(dataUrl);
   const buffer = Buffer.from(base64, 'base64');
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const publicId = `${publicIdPrefix}-${Date.now()}${publicIdSuffix ? `-${publicIdSuffix}` : ''}`;
+
+  if (!isCloudinaryConfigured()) {
+    return storeBufferLocally({ buffer, folder, publicId, extension, mimeType });
+  }
 
   const signature = buildSignature(
     {
@@ -98,17 +145,17 @@ export const uploadRawFileToCloudinary = async ({
   publicIdPrefix = 'career-resume',
   publicIdSuffix = '',
 }) => {
-  if (!env.cloudinary.cloudName || !env.cloudinary.apiKey || !env.cloudinary.apiSecret) {
-    throw new ApiError(500, 'Cloudinary credentials are not configured');
-  }
-
   const { mimeType, base64, extension } = parseDataUrl(dataUrl);
   const buffer = Buffer.from(base64, 'base64');
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const publicId = `${publicIdPrefix}-${Date.now()}${publicIdSuffix ? `-${publicIdSuffix}` : ''}`;
-  
+
   const isImage = mimeType.startsWith('image/');
   const resourceType = isImage ? 'image' : 'raw';
+
+  if (!isCloudinaryConfigured()) {
+    return storeBufferLocally({ buffer, folder, publicId, extension, mimeType, resourceType });
+  }
 
   const params = {
     folder,
