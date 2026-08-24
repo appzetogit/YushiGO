@@ -1,6 +1,11 @@
 /**
  * Seed script: create or update the default admin account.
- * Usage: node scripts/seedAdmin.js
+ *
+ * Usage:
+ *   node scripts/seedAdmin.js
+ *   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD=secret node scripts/seedAdmin.js
+ *
+ * Credentials come from env so they are never committed to the repo.
  */
 
 import mongoose from 'mongoose';
@@ -9,74 +14,59 @@ import dotenv from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// ── Load .env ────────────────────────────────────────────────────────────────
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const MONGO_URI    = process.env.MONGODB_URI;
-const MONGO_DB     = process.env.MONGODB_DB_NAME || 'appzeto_taxi';
+const { Admin } = await import('../src/modules/taxi/admin/models/Admin.js');
+
+const MONGO_URI = process.env.MONGODB_URI;
+const MONGO_DB = process.env.MONGODB_DB_NAME || 'appzeto_taxi';
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@admin.com').toLowerCase().trim();
+const ADMIN_PASS = process.env.ADMIN_PASSWORD || '123456';
+const ADMIN_NAME = process.env.ADMIN_NAME || 'Super Admin';
 
 if (!MONGO_URI) {
-  console.error('❌  MONGODB_URI is not set in .env');
+  console.error('MONGODB_URI is not set in .env');
   process.exit(1);
 }
 
-// ── Admin credentials ────────────────────────────────────────────────────────
-const ADMIN_EMAIL = 'admin@admin.com';
-const ADMIN_PASS  = '123456';
-const ADMIN_NAME  = 'Super Admin';
+if (String(ADMIN_PASS).length < 5) {
+  console.error('ADMIN_PASSWORD must be at least 5 characters');
+  process.exit(1);
+}
 
-// ── Mongoose schema (mirrors Admin.js) ───────────────────────────────────────
-const adminSchema = new mongoose.Schema(
-  {
-    name:        { type: String, required: true, trim: true },
-    email:       { type: String, lowercase: true, trim: true, unique: true },
-    phone:       { type: String, trim: true },
-    password:    { type: String, required: true, minlength: 5, select: false },
-    role:        { type: String, default: 'admin' },
-    permissions: { type: [String], default: [] },
-  },
-  { timestamps: true },
-);
+try {
+  await mongoose.connect(MONGO_URI, { dbName: MONGO_DB });
+  console.log(`Connected to MongoDB (${MONGO_DB})`);
 
-const Admin = mongoose.models.TaxiAdmin || mongoose.model('TaxiAdmin', adminSchema);
+  const password = await bcrypt.hash(ADMIN_PASS, 10);
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-(async () => {
-  try {
-    await mongoose.connect(MONGO_URI, { dbName: MONGO_DB });
-    console.log(`✅  Connected to MongoDB (${MONGO_DB})`);
+  // admin_type must be 'superadmin' — the panel grants full menu access on that
+  // field, not on `role`. A blank admin_type yields an admin who sees nothing.
+  const doc = {
+    name: ADMIN_NAME,
+    password,
+    role: 'superadmin',
+    admin_type: 'superadmin',
+    permissions: ['*'],
+    active: true,
+  };
 
-    const hashedPassword = await bcrypt.hash(ADMIN_PASS, 10);
+  const existing = await Admin.findOne({ email: ADMIN_EMAIL });
 
-    const existing = await Admin.findOne({ email: ADMIN_EMAIL });
-
-    if (existing) {
-      // Update password in case it changed
-      await Admin.updateOne(
-        { email: ADMIN_EMAIL },
-        { $set: { password: hashedPassword, name: ADMIN_NAME, role: 'admin' } },
-      );
-      console.log(`🔄  Admin already exists — password updated.`);
-    } else {
-      await Admin.create({
-        name:     ADMIN_NAME,
-        email:    ADMIN_EMAIL,
-        password: hashedPassword,
-        role:     'admin',
-      });
-      console.log(`🎉  Admin created successfully!`);
-    }
-
-    console.log(`\n  Email   : ${ADMIN_EMAIL}`);
-    console.log(`  Password: ${ADMIN_PASS}`);
-    console.log(`  Role    : admin\n`);
-  } catch (err) {
-    console.error('❌  Seed failed:', err.message);
-    process.exit(1);
-  } finally {
-    await mongoose.disconnect();
-    console.log('👋  Disconnected from MongoDB.');
+  if (existing) {
+    await Admin.updateOne({ email: ADMIN_EMAIL }, { $set: doc });
+    console.log('Admin already existed — updated.');
+  } else {
+    await Admin.create({ ...doc, email: ADMIN_EMAIL });
+    console.log('Admin created.');
   }
-})();
+
+  console.log(`\n  Email : ${ADMIN_EMAIL}`);
+  console.log(`  Type  : superadmin (full access)\n`);
+} catch (error) {
+  console.error('Seed failed:', error.message);
+  process.exitCode = 1;
+} finally {
+  await mongoose.disconnect();
+}
