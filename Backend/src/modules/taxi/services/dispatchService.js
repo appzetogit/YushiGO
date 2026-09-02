@@ -9,6 +9,9 @@ import { WalletTransaction } from '../driver/models/WalletTransaction.js';
 import { applyDriverWalletAdjustment } from '../driver/services/walletService.js';
 import { matchDrivers } from './matchingService.js';
 import {
+  CANCEL_REASON_UNSPECIFIED,
+  RIDE_CANCELLED_BY,
+  USER_CANCEL_REASONS,
   RIDE_LIVE_STATUS,
   RIDE_STATUS,
 } from '../constants/index.js';
@@ -684,23 +687,17 @@ const closeDriverRequestWindow = (rideId, driverIds = []) => {
   }
 };
 
-const emitRideRequestToDrivers = async ({
+const buildRideRequestPayload = ({
   ride,
-  targetDrivers = [],
   zone = null,
   effectiveRadius = 0,
   dispatchVehicleTypeIds = [],
   dispatchConfig,
   attemptIndex = 0,
+  requestExpiresAt,
 }) => {
-  if (!ride || !targetDrivers.length) {
-    return;
-  }
-
-  const requestExpiresAt = new Date(Date.now() + dispatchConfig.retryDelayMs).toISOString();
-
-  for (const driver of targetDrivers) {
-    emitToDriver(driver._id, 'rideRequest', {
+  {
+    return {
       rideId: String(ride._id),
       type: ride.serviceType || 'ride',
       serviceType: ride.serviceType || 'ride',
@@ -751,7 +748,36 @@ const emitRideRequestToDrivers = async ({
       expiresInSeconds: dispatchConfig.retryWindowSeconds,
       requestExpiresAt,
       zoneId: zone?._id ? String(zone._id) : null,
-    });
+    };
+  }
+};
+
+const emitRideRequestToDrivers = async ({
+  ride,
+  targetDrivers = [],
+  zone = null,
+  effectiveRadius = 0,
+  dispatchVehicleTypeIds = [],
+  dispatchConfig,
+  attemptIndex = 0,
+}) => {
+  if (!ride || !targetDrivers.length) {
+    return;
+  }
+
+  const requestExpiresAt = new Date(Date.now() + dispatchConfig.retryDelayMs).toISOString();
+  const payload = buildRideRequestPayload({
+    ride,
+    zone,
+    effectiveRadius,
+    dispatchVehicleTypeIds,
+    dispatchConfig,
+    attemptIndex,
+    requestExpiresAt,
+  });
+
+  for (const driver of targetDrivers) {
+    emitToDriver(driver._id, 'rideRequest', payload);
   }
 
   sendPushNotificationToEntities({
@@ -769,6 +795,52 @@ const emitRideRequestToDrivers = async ({
   }).catch((error) => {
     console.error('Failed to send driver ride-request push notification', error);
   });
+};
+
+export const getPendingRideOffersForDriver = async (driverId) => {
+  if (!driverId || activeDispatches.size === 0) {
+    return [];
+  }
+
+  const driverKey = String(driverId);
+  const dispatchConfig = await resolveTransportDispatchConfig();
+  const offers = [];
+
+  for (const rideId of Array.from(activeDispatches.keys())) {
+    const dispatchState = getDispatchState(rideId);
+
+    if (
+      !dispatchState.notifiedDriverIds.includes(driverKey) ||
+      dispatchState.rejectedDriverIds.includes(driverKey)
+    ) {
+      continue;
+    }
+
+    const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
+
+    if (!ride || ride.status !== RIDE_STATUS.SEARCHING || ride.driverId) {
+      continue;
+    }
+
+    const attemptIndex = Number.isInteger(dispatchState.radiusIndex) ? dispatchState.radiusIndex : 0;
+
+    offers.push(buildRideRequestPayload({
+      ride,
+      effectiveRadius: getAttemptRadiusMeters(
+        dispatchConfig.baseDistanceMeters || dispatchConfig.maxDistanceMeters,
+        attemptIndex,
+      ),
+      dispatchVehicleTypeIds: getDispatchVehicleTypeIds(ride),
+      dispatchConfig,
+      attemptIndex,
+      requestExpiresAt: new Date(
+        new Date(ride.dispatchTracking?.lastDispatchAttemptAt || ride.updatedAt || Date.now()).getTime()
+        + dispatchConfig.retryDelayMs,
+      ).toISOString(),
+    }));
+  }
+
+  return offers;
 };
 
 export const markDriverRejectedFromDispatch = async (rideId, driverId) => {
@@ -893,7 +965,21 @@ export const cancelRideByAdmin = async (rideId) => {
   return ride;
 };
 
-export const cancelRideByUser = async ({ rideId, userId }) => {
+const describeCancelReason = (cancellation) => {
+  const code = cancellation?.reasonCode || '';
+
+  if (!code || code === CANCEL_REASON_UNSPECIFIED) {
+    return '';
+  }
+
+  if (code === 'other') {
+    return cancellation?.reasonNote || 'Other';
+  }
+
+  return USER_CANCEL_REASONS.find((reason) => reason.code === code)?.label || '';
+};
+
+export const cancelRideByUser = async ({ rideId, userId, reasonCode = '', reasonNote = '' }) => {
   const dispatchState = getDispatchState(rideId);
   stopDispatchFlow(rideId, { releaseLease: false });
   const session = await mongoose.startSession();
@@ -925,6 +1011,12 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
 
     ride.status = RIDE_STATUS.CANCELLED;
     ride.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
+    ride.cancellation = {
+      cancelledBy: RIDE_CANCELLED_BY.USER,
+      reasonCode: reasonCode || CANCEL_REASON_UNSPECIFIED,
+      reasonNote: reasonNote || '',
+      cancelledAt: new Date(),
+    };
     if (ride.bookingMode === 'bidding') {
       ride.biddingStatus = 'cancelled';
     }
@@ -953,17 +1045,26 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
   }
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
+  const cancellationDetail = {
+    cancelledBy: RIDE_CANCELLED_BY.USER,
+    reasonCode: ride.cancellation?.reasonCode || CANCEL_REASON_UNSPECIFIED,
+    reasonLabel: describeCancelReason(ride.cancellation),
+    reasonNote: ride.cancellation?.reasonNote || '',
+  };
+
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),
     room: getRideRoom(ride._id),
     reason: 'You cancelled the ride',
+    cancellation: cancellationDetail,
   });
 
   if (ride.driverId) {
     emitToRoom(getDriverRoom(ride.driverId), 'rideRequestClosed', {
       rideId: String(ride._id),
       reason: 'user-cancelled',
-      message: 'User cancelled the ride.',
+      message: `User cancelled the ride. ${cancellationDetail.reasonLabel}`.trim(),
+      cancellation: cancellationDetail,
     });
   }
 
@@ -972,6 +1073,7 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
       rideId: String(ride._id),
       reason: 'user-cancelled',
       message: 'User cancelled the ride.',
+      cancellation: cancellationDetail,
     });
   }
 

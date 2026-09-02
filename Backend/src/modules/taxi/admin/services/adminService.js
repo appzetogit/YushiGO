@@ -5892,6 +5892,12 @@ const toAdminRideRow = (ride) => {
     tripStatus,
     rideStatus: ride.status,
     liveStatus: ride.liveStatus,
+    cancellation: {
+      cancelledBy: ride.cancellation?.cancelledBy || null,
+      reasonCode: ride.cancellation?.reasonCode || '',
+      reasonNote: ride.cancellation?.reasonNote || '',
+      cancelledAt: ride.cancellation?.cancelledAt || null,
+    },
     paymentOption: 'CASH',
     fare: Number(ride.fare || 0),
     pickupLabel: formatRidePointLabel(ride.pickupLocation, 'Pickup'),
@@ -11180,14 +11186,19 @@ export const updateGeneralSettings = async (category, payload) => {
 };
 
 export const listAppModules = async (query = {}) => {
+  // The app bootstrap and the public catalogue need every module, so paginate only
+  // when a caller explicitly asks for a page. Defaulting to 10 silently hid modules
+  // past the tenth from the rider app.
+  const wantsPage = query.page !== undefined || query.limit !== undefined;
   const safePage = Number(query.page) || 1;
-  const safeLimit = Number(query.limit) || 10;
-  const start = (safePage - 1) * safeLimit;
+  const requestedLimit = Number(query.limit) || 10;
+  const safeLimit = wantsPage ? requestedLimit : 0;
+  const start = (safePage - 1) * requestedLimit;
 
   const [modules, total] = await Promise.all([
     TaxiAppModule.find()
       .sort({ order_by: 1, createdAt: -1 })
-      .skip(start)
+      .skip(wantsPage ? start : 0)
       .limit(safeLimit)
       .lean(),
     TaxiAppModule.countDocuments(),
@@ -11214,9 +11225,9 @@ export const listAppModules = async (query = {}) => {
     results,
     paginator: {
       total,
-      current_page: safePage,
-      per_page: safeLimit,
-      last_page: Math.max(1, Math.ceil(total / safeLimit)),
+      current_page: wantsPage ? safePage : 1,
+      per_page: wantsPage ? requestedLimit : total,
+      last_page: wantsPage ? Math.max(1, Math.ceil(total / requestedLimit)) : 1,
     },
   };
 };

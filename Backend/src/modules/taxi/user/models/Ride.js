@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { RIDE_LIVE_STATUS, RIDE_STATUS } from '../../constants/index.js';
+import { RIDE_CANCELLED_BY, RIDE_LIVE_STATUS, RIDE_STATUS } from '../../constants/index.js';
 
 const rideMessageSchema = new mongoose.Schema(
   {
@@ -265,6 +265,30 @@ const rideSchema = new mongoose.Schema(
       type: String,
       enum: Object.values(RIDE_LIVE_STATUS),
       default: RIDE_LIVE_STATUS.SEARCHING,
+    },
+    cancellation: {
+      cancelledBy: {
+        type: String,
+        enum: [...Object.values(RIDE_CANCELLED_BY), null],
+        default: null,
+      },
+      // Stable key from USER_CANCEL_REASONS, or 'unspecified' for older clients.
+      reasonCode: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+      // Free text the rider typed — required by the API when reasonCode is 'other'.
+      reasonNote: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: 500,
+      },
+      cancelledAt: {
+        type: Date,
+        default: null,
+      },
     },
     pickupLocation: {
       type: {

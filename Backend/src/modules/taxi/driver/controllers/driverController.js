@@ -36,6 +36,7 @@ import {
 } from "../services/authService.js";
 import { cancelScheduledRideByDriver, emitToDriver } from "../../services/dispatchService.js";
 import { notifyLateAvailableDriver } from "../../services/dispatchService.js";
+import { getPendingRideOffersForDriver } from "../../services/dispatchService.js";
 import { findZoneByPickup } from "../services/locationService.js";
 import { listDriverServiceLocations } from "../services/serviceLocationService.js";
 import {
@@ -3292,6 +3293,15 @@ const resolvePushTokenEntityForRole = async (req) => {
   }
 
   return entity;
+};
+
+export const getDriverRideOffers = async (req, res) => {
+  const offers = await getPendingRideOffersForDriver(req.auth?.sub);
+
+  res.json({
+    success: true,
+    data: { offers },
+  });
 };
 
 export const saveDriverFcmToken = async (req, res) => {

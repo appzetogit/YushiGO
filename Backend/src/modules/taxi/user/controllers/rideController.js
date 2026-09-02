@@ -6,7 +6,12 @@ import { resolveConfiguredGatewayCredentials } from '../../services/paymentGatew
 import { Driver } from '../../driver/models/Driver.js';
 import { WalletTransaction } from '../../driver/models/WalletTransaction.js';
 import { applyDriverWalletAdjustment, serializeDriverWallet } from '../../driver/services/walletService.js';
-import { RIDE_LIVE_STATUS, RIDE_STATUS } from '../../constants/index.js';
+import {
+  RIDE_LIVE_STATUS,
+  RIDE_STATUS,
+  USER_CANCEL_REASONS,
+  USER_CANCEL_REASON_CODES,
+} from '../../constants/index.js';
 import {
   acceptRideBidAssignment,
   createRideRecord,
@@ -353,6 +358,12 @@ export const createRide = async (req, res) => {
 };
 
 export const getRideById = async (req, res) => {
+  // Without this a non-ObjectId path segment surfaces as a raw Mongoose CastError 500
+  // instead of a 404 — and masks any sibling route that hasn't been deployed yet.
+  if (!mongoose.Types.ObjectId.isValid(req.params.rideId)) {
+    throw new ApiError(404, 'Ride not found');
+  }
+
   await ensureRideParticipantAccess({
     rideId: req.params.rideId,
     role: req.auth.role,
@@ -980,10 +991,34 @@ export const getRideAppTipSettings = async (_req, res) => {
   });
 };
 
+export const listRideCancellationReasons = async (_req, res) => {
+  res.json({
+    success: true,
+    data: { reasons: USER_CANCEL_REASONS },
+  });
+};
+
 export const cancelRide = async (req, res) => {
+  const reasonCode = String(req.body?.reasonCode || '').trim();
+  const reasonNote = String(req.body?.reasonNote || '').trim();
+
+  if (reasonCode && !USER_CANCEL_REASON_CODES.includes(reasonCode)) {
+    throw new ApiError(400, 'reasonCode is invalid');
+  }
+
+  if (reasonCode === 'other' && !reasonNote) {
+    throw new ApiError(400, 'reasonNote is required when reasonCode is "other"');
+  }
+
+  if (reasonNote.length > 500) {
+    throw new ApiError(400, 'reasonNote must be 500 characters or fewer');
+  }
+
   const ride = await cancelRideByUser({
     rideId: req.params.rideId,
     userId: req.auth.sub,
+    reasonCode,
+    reasonNote,
   });
 
   if (!ride) {
@@ -996,6 +1031,12 @@ export const cancelRide = async (req, res) => {
       rideId: String(ride._id),
       status: ride.status,
       liveStatus: ride.liveStatus,
+      cancellation: {
+        cancelledBy: ride.cancellation?.cancelledBy || null,
+        reasonCode: ride.cancellation?.reasonCode || '',
+        reasonNote: ride.cancellation?.reasonNote || '',
+        cancelledAt: ride.cancellation?.cancelledAt || null,
+      },
     },
   });
 };
