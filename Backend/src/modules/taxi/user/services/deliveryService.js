@@ -155,6 +155,33 @@ export const serializeDeliveryRealtime = (ride) => {
   };
 };
 
+/**
+ * Price a delivery without creating one. Uses exactly the same vehicle lookup and
+ * fare maths as createDeliveryRecord, so a quote and the fare charged on booking
+ * cannot drift apart.
+ */
+export const quoteDelivery = async ({ pickup, drop, vehicleTypeId, parcel }) => {
+  await ensureDeliveryVehicleAllowed({ vehicleTypeId, parcel });
+
+  const pickupCoords = normalizePoint(pickup, 'pickup');
+  const dropCoords = normalizePoint(drop, 'drop');
+  const vehicle = vehicleTypeId
+    ? await Vehicle.findById(vehicleTypeId).select('delivery_distance_pricing service_tax').lean()
+    : null;
+
+  const fareBreakdown = computeDeliveryFareBreakdown({ vehicle, pickupCoords, dropCoords });
+
+  return {
+    vehicleTypeId: vehicleTypeId ? String(vehicleTypeId) : null,
+    distanceKm: roundCurrency(calculateDistanceKm(pickupCoords, dropCoords)),
+    // Zero when this vehicle has no delivery pricing configured — the client then
+    // has to collect a fare itself, same as createDeliveryRecord falls back to doing.
+    priced: fareBreakdown.total > 0,
+    fare: fareBreakdown.total,
+    breakdown: fareBreakdown,
+  };
+};
+
 export const createDeliveryRecord = async ({
   userId,
   pickup,

@@ -669,10 +669,29 @@ linked. Live tracking uses the exact same socket events.
 
 | Method | Path | Auth |
 |---|---|---|
+| POST | `/deliveries/quote` | user | `{ pickup, drop, vehicleTypeId, parcel? }` → price before booking |
 | POST | `/deliveries` | user |
 | GET | `/deliveries` | user |
 | GET | `/deliveries/active/me` | user, driver |
 | GET | `/deliveries/:deliveryId` | participant |
+
+`POST /deliveries/quote` prices a parcel before the rider commits. It runs the same vehicle lookup
+and fare maths the booking call uses, so the quote and the fare charged cannot drift apart:
+
+```json
+{ "pickup": { "lat": 22.71, "lng": 75.85 },
+  "drop":   { "lat": 22.75, "lng": 75.89 },
+  "vehicleTypeId": "<_id>", "parcel": { "goodsTypeId": "..." } }
+```
+
+```json
+{ "vehicleTypeId": "...", "distanceKm": 6.42, "priced": true, "fare": 148.5,
+  "breakdown": { "total": 148.5, "subtotal": 140, "serviceTaxPercentage": 6, "serviceTaxAmount": 8.5 } }
+```
+
+`priced: false` (and `fare: 0`) means this vehicle has no delivery pricing configured in admin —
+fall back to collecting a fare in the app, which is what `POST /deliveries` does in that case too.
+Vehicle/goods-type validation is identical to booking, so an invalid pair fails here first.
 
 **Medicine**
 

@@ -1,4 +1,15 @@
-import { createDeliveryRecord, getActiveDeliveryForIdentity, getDeliveryById, listDeliveriesForIdentity } from '../services/deliveryService.js';
+import { createDeliveryRecord, getActiveDeliveryForIdentity, getDeliveryById, listDeliveriesForIdentity, quoteDelivery } from '../services/deliveryService.js';
+
+export const getDeliveryQuote = async (req, res) => {
+  const { pickup, drop, vehicleTypeId, parcel } = req.body;
+
+  const quote = await quoteDelivery({ pickup, drop, vehicleTypeId, parcel });
+
+  res.json({
+    success: true,
+    data: quote,
+  });
+};
 
 export const createDelivery = async (req, res) => {
   const { pickup, drop, pickupAddress, dropAddress, fare, vehicleTypeId, vehicleTypeIds, vehicleIconType, vehicleIconUrl, paymentMethod, parcel } = req.body;

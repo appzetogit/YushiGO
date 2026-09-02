@@ -4,12 +4,14 @@ import { authenticate } from '../../middlewares/authMiddleware.js';
 import {
   createDelivery,
   getDelivery,
+  getDeliveryQuote,
   getMyActiveDelivery,
   listMyDeliveries,
 } from '../controllers/deliveryController.js';
 
 export const deliveryRouter = Router();
 
+deliveryRouter.post('/quote', authenticate(['user']), asyncHandler(getDeliveryQuote));
 deliveryRouter.post('/', authenticate(['user']), asyncHandler(createDelivery));
 deliveryRouter.get('/', authenticate(['user']), asyncHandler(listMyDeliveries));
 deliveryRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveDelivery));
