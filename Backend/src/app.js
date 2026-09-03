@@ -10,6 +10,14 @@ import { taxiRouter } from './modules/taxi/routes/index.js';
 export const createApp = () => {
   const app = express();
 
+  // nginx compresses proxied JSON with brotli or gzip but forwards our ETag
+  // untouched, so the same entity tag ends up describing the br, gzip and
+  // identity bodies. On revalidation the browser gets a 304 carrying no
+  // Content-Encoding, decodes its cached compressed body as identity and fails
+  // with ERR_CONTENT_DECODING_FAILED. Responses here are dynamic JSON, so
+  // dropping the ETag costs nothing and removes the broken revalidation.
+  app.set('etag', false);
+
 app.use(
   cors({
     origin: '*',
