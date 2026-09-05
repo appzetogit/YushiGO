@@ -19,6 +19,8 @@ const dispatch = await import('../../src/modules/taxi/studentRide/services/dispa
 const { StudentRide } = await import('../../src/modules/taxi/studentRide/models/StudentRide.js');
 const { StudentRideEvent } = await import('../../src/modules/taxi/studentRide/models/StudentRideEvent.js');
 const { Ride } = await import('../../src/modules/taxi/user/models/Ride.js');
+// Registered so the collection list below can reference it; Ride only holds a ref.
+await import('../../src/modules/taxi/user/models/User.js');
 
 await mongoose.connect(process.env.MONGODB_URI, { autoIndex: false });
 
