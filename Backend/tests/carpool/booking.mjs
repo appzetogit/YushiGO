@@ -99,7 +99,7 @@ await expectReject('seats beyond the car capacity are refused', 'INVALID_VEHICLE
     userId: host,
     payload: {
       vehicle_id: vehicle.id, origin: INDORE, destination: UJJAIN, pickup: INDORE, drop: UJJAIN,
-      date: tomorrow, departure_time: '10:30', available_seats: 9, price_per_seat: 100,
+      date: tomorrow, departure_time: '10:30', available_seats: 5, price_per_seat: 100,
     },
   }));
 

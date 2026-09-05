@@ -532,3 +532,101 @@ export const getBooking = async ({ bookingId, userId }) => {
     viewerRole: isHost ? 'host' : 'passenger',
   };
 };
+
+/**
+ * Host starts the ride (§30). Accepted bookings ride with it; anything still
+ * pending is declined, because there is no longer a trip to join.
+ */
+export const startRide = async ({ rideId, userId }) => {
+  const notifications = [];
+
+  const result = await runInTransaction(async (session) => {
+    notifications.length = 0;
+
+    const ride = await requireOwnedRide({ rideId, userId }, { session });
+
+    if (![CARPOOL_RIDE_STATUS.PUBLISHED, CARPOOL_RIDE_STATUS.FULL].includes(ride.status)) {
+      throw carpoolError(
+        409,
+        CARPOOL_ERRORS.RIDE_NOT_AVAILABLE,
+        `A ${ride.status.toLowerCase()} ride cannot be started.`,
+      );
+    }
+
+    const stranded = await CarpoolBooking.find({
+      rideId: ride._id,
+      status: CARPOOL_BOOKING_STATUS.PENDING,
+    }).session(session);
+
+    for (const booking of stranded) {
+      booking.status = CARPOOL_BOOKING_STATUS.REJECTED;
+      booking.rejectedAt = new Date();
+      booking.isActive = false;
+      booking.cancellationReason = 'The ride started before this request was answered.';
+      await booking.save({ session });
+      notifications.push(['CARPOOL_REQUEST_REJECTED', { ride, booking }]);
+    }
+
+    ride.status = CARPOOL_RIDE_STATUS.STARTED;
+    ride.startedAt = new Date();
+    await ride.save({ session });
+
+    const riding = await CarpoolBooking.find({
+      rideId: ride._id,
+      status: CARPOOL_BOOKING_STATUS.ACCEPTED,
+    }).session(session);
+
+    for (const booking of riding) {
+      notifications.push(['CARPOOL_RIDE_STARTED', { ride, booking }]);
+    }
+
+    return { rideId: String(ride._id), status: ride.status, startedAt: ride.startedAt };
+  });
+
+  await flushNotifications(notifications);
+
+  return result;
+};
+
+/** Host completes the ride (§31). Accepted bookings become COMPLETED with it. */
+export const completeRide = async ({ rideId, userId }) => {
+  const notifications = [];
+
+  const result = await runInTransaction(async (session) => {
+    notifications.length = 0;
+
+    const ride = await requireOwnedRide({ rideId, userId }, { session });
+
+    if (ride.status !== CARPOOL_RIDE_STATUS.STARTED) {
+      throw carpoolError(409, CARPOOL_ERRORS.RIDE_NOT_AVAILABLE, 'Only a started ride can be completed.');
+    }
+
+    const bookings = await CarpoolBooking.find({
+      rideId: ride._id,
+      status: CARPOOL_BOOKING_STATUS.ACCEPTED,
+    }).session(session);
+
+    const payment = await settlement.onRideCompleted({ ride, bookings });
+
+    for (const booking of bookings) {
+      booking.status = CARPOOL_BOOKING_STATUS.COMPLETED;
+      booking.paymentStatus = payment.paymentStatus;
+      booking.completedAt = new Date();
+      // The trip is over, so the seat is no longer held and the passenger is
+      // free to book this host again.
+      booking.isActive = false;
+      await booking.save({ session });
+      notifications.push(['CARPOOL_RIDE_COMPLETED', { ride, booking }]);
+    }
+
+    ride.status = CARPOOL_RIDE_STATUS.COMPLETED;
+    ride.completedAt = new Date();
+    await ride.save({ session });
+
+    return { rideId: String(ride._id), status: ride.status, completedBookings: bookings.length };
+  });
+
+  await flushNotifications(notifications);
+
+  return result;
+};
