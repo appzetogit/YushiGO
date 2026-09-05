@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "test:student-ride": "node tests/studentRide/gate1.mjs && node tests/studentRide/gate2.mjs",
+    "test:student-ride": "node tests/studentRide/gate1.mjs && node tests/studentRide/gate2.mjs && node tests/studentRide/gate3.mjs",
     "test:carpool": "node tests/carpool/routeMatching.mjs && node tests/carpool/booking.mjs && node tests/carpool/rating.mjs",
     "test:api": "node tests/api/http.mjs",
     "test": "npm run test:student-ride && npm run test:carpool && npm run test:api"
