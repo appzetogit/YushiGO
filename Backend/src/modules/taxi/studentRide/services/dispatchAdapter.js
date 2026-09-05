@@ -32,7 +32,11 @@ export const createDispatchRide = async ({ userId, pickup, destination, schedule
     vehicleTypeId: payload?.vehicle_type_id || payload?.vehicleTypeId || null,
     paymentMethod: payload?.payment_method || payload?.paymentMethod || 'cash',
     serviceType: 'student',
-    transport_type: 'student',
+    // transport_type keys the SetPrice lookup and driver matching, and a student
+    // ride is carried by an ordinary taxi — a distinct value here would find no
+    // pricing rows and no eligible drivers. serviceType is what marks it as a
+    // student ride.
+    transport_type: payload?.transport_type || 'taxi',
     scheduledAt,
     service_location_id: payload?.service_location_id || null,
     zone_id: payload?.zone_id || null,
