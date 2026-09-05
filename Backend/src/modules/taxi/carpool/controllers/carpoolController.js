@@ -1,5 +1,6 @@
 import * as vehicleService from '../services/carpoolVehicleService.js';
 import * as rideService from '../services/carpoolRideService.js';
+import * as bookingService from '../services/carpoolBookingService.js';
 
 export const listVehicles = async (req, res) => {
   const vehicles = await vehicleService.listVehicles({ userId: req.auth.sub });
@@ -57,4 +58,99 @@ export const listMyOfferedRides = async (req, res) => {
   });
 
   res.json({ success: true, data: { rides } });
+};
+
+export const createBooking = async (req, res) => {
+  const booking = await bookingService.createBooking({
+    rideId: req.params.rideId,
+    userId: req.auth.sub,
+    payload: req.body,
+  });
+
+  res.status(201).json({ success: true, data: booking });
+};
+
+export const getBooking = async (req, res) => {
+  const booking = await bookingService.getBooking({
+    bookingId: req.params.bookingId,
+    userId: req.auth.sub,
+  });
+
+  res.json({ success: true, data: booking });
+};
+
+export const listRideRequests = async (req, res) => {
+  const requests = await bookingService.listRideRequests({
+    rideId: req.params.rideId,
+    userId: req.auth.sub,
+    status: req.query?.status,
+  });
+
+  res.json({ success: true, data: { requests } });
+};
+
+export const acceptBooking = async (req, res) => {
+  const booking = await bookingService.acceptBooking({
+    bookingId: req.params.bookingId,
+    userId: req.auth.sub,
+  });
+
+  res.json({ success: true, message: 'Booking accepted', data: booking });
+};
+
+export const rejectBooking = async (req, res) => {
+  const booking = await bookingService.rejectBooking({
+    bookingId: req.params.bookingId,
+    userId: req.auth.sub,
+    reason: req.body?.reason,
+  });
+
+  res.json({ success: true, message: 'Booking rejected', data: booking });
+};
+
+export const cancelBooking = async (req, res) => {
+  const booking = await bookingService.cancelBookingByPassenger({
+    bookingId: req.params.bookingId,
+    userId: req.auth.sub,
+    reason: req.body?.reason,
+  });
+
+  res.json({ success: true, message: 'Booking cancelled', data: booking });
+};
+
+export const listMyBookings = async (req, res) => {
+  const bookings = await bookingService.listMyBookings({
+    userId: req.auth.sub,
+    status: req.query?.status,
+  });
+
+  res.json({ success: true, data: { bookings } });
+};
+
+export const cancelRide = async (req, res) => {
+  const result = await bookingService.cancelRide({
+    rideId: req.params.rideId,
+    userId: req.auth.sub,
+    reason: req.body?.reason,
+  });
+
+  res.json({ success: true, message: 'Ride cancelled', data: result });
+};
+
+export const startRide = async (req, res) => {
+  const result = await bookingService.startRide({
+    rideId: req.params.rideId,
+    userId: req.auth.sub,
+  });
+
+  res.json({ success: true, message: 'Ride started', data: result });
+};
+
+export const completeRide = async (req, res) => {
+  const result = await bookingService.completeRide({
+    rideId: req.params.rideId,
+    userId: req.auth.sub,
+  });
+
+  res.json({ success: true, message: 'Ride completed', data: result });
 };

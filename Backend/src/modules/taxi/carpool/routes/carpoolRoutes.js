@@ -19,3 +19,17 @@ carpoolRouter.post('/carpool/rides', asUser, asyncHandler(carpool.createRide));
 carpoolRouter.get('/carpool/rides/search', asUser, asyncHandler(carpool.searchRides));
 carpoolRouter.get('/carpool/my-offered-rides', asUser, asyncHandler(carpool.listMyOfferedRides));
 carpoolRouter.get('/carpool/rides/:rideId', asUser, asyncHandler(carpool.getRide));
+
+// Ride lifecycle — host only.
+carpoolRouter.post('/carpool/rides/:rideId/cancel', asUser, asyncHandler(carpool.cancelRide));
+carpoolRouter.post('/carpool/rides/:rideId/start', asUser, asyncHandler(carpool.startRide));
+carpoolRouter.post('/carpool/rides/:rideId/complete', asUser, asyncHandler(carpool.completeRide));
+carpoolRouter.get('/carpool/rides/:rideId/requests', asUser, asyncHandler(carpool.listRideRequests));
+
+// Bookings.
+carpoolRouter.post('/carpool/rides/:rideId/bookings', asUser, asyncHandler(carpool.createBooking));
+carpoolRouter.get('/carpool/my-bookings', asUser, asyncHandler(carpool.listMyBookings));
+carpoolRouter.get('/carpool/bookings/:bookingId', asUser, asyncHandler(carpool.getBooking));
+carpoolRouter.post('/carpool/bookings/:bookingId/accept', asUser, asyncHandler(carpool.acceptBooking));
+carpoolRouter.post('/carpool/bookings/:bookingId/reject', asUser, asyncHandler(carpool.rejectBooking));
+carpoolRouter.post('/carpool/bookings/:bookingId/cancel', asUser, asyncHandler(carpool.cancelBooking));
