@@ -7,6 +7,7 @@ import { userModuleRouter } from '../user/routes/index.js';
 import { commonRouter } from '../common/routes/commonRoutes.js';
 import { careerRouter } from '../career/routes/careerRoutes.js';
 import { studentRideModuleRouter } from '../studentRide/routes/index.js';
+import { carpoolModuleRouter } from '../carpool/routes/index.js';
 
 export const taxiRouter = Router();
 
@@ -18,3 +19,4 @@ taxiRouter.use(supportModuleRouter);
 taxiRouter.use(commonRouter);
 taxiRouter.use(careerRouter);
 taxiRouter.use(studentRideModuleRouter);
+taxiRouter.use(carpoolModuleRouter);
