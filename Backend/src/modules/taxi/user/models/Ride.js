@@ -81,9 +81,16 @@ const rideSchema = new mongoose.Schema(
       ref: 'Delivery',
       default: null,
     },
+    studentRideId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiStudentRide',
+      default: null,
+    },
+    // 'student' rides carry a StudentRide companion document, the same way
+    // 'parcel' rides carry a Delivery.
     serviceType: {
       type: String,
-      enum: ['ride', 'parcel', 'intercity', 'medicine'],
+      enum: ['ride', 'parcel', 'intercity', 'medicine', 'student'],
       default: 'ride',
       lowercase: true,
       trim: true,

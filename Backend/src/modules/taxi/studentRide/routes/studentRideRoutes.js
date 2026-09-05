@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { authenticate } from '../../middlewares/authMiddleware.js';
+import { otpSendRateLimit, otpVerifyRateLimit } from '../../middlewares/rateLimitMiddleware.js';
 import * as studentController from '../controllers/studentController.js';
 
 export const studentRideRouter = Router();
@@ -27,3 +28,24 @@ studentRideRouter.post('/student-ride/students/:studentId/locations', asUser, as
 studentRideRouter.get('/student-ride/locations/:locationId', asUser, asyncHandler(studentController.getSavedLocation));
 studentRideRouter.patch('/student-ride/locations/:locationId', asUser, asyncHandler(studentController.updateSavedLocation));
 studentRideRouter.delete('/student-ride/locations/:locationId', asUser, asyncHandler(studentController.deleteSavedLocation));
+
+// Rides — booked and managed by the parent account.
+studentRideRouter.post('/student-ride/rides', asUser, asyncHandler(studentController.createStudentRide));
+studentRideRouter.get('/student-ride/rides', asUser, asyncHandler(studentController.listStudentRides));
+studentRideRouter.get('/student-ride/rides/upcoming', asUser, asyncHandler(studentController.listUpcomingStudentRides));
+studentRideRouter.get('/student-ride/rides/:studentRideId', asUser, asyncHandler(studentController.getStudentRide));
+studentRideRouter.post('/student-ride/rides/:studentRideId/cancel', asUser, asyncHandler(studentController.cancelStudentRide));
+studentRideRouter.post('/student-ride/rides/:studentRideId/otp/:kind/reissue', otpSendRateLimit, asUser, asyncHandler(studentController.reissueRideOtp));
+
+// Driver-facing: the assigned driver verifies codes and advances the ride.
+studentRideRouter.post(
+  '/student-ride/rides/:studentRideId/:kind/verify',
+  otpVerifyRateLimit,
+  authenticate(['driver']),
+  asyncHandler(studentController.verifyRideOtp),
+);
+studentRideRouter.post(
+  '/student-ride/rides/:studentRideId/status',
+  authenticate(['driver']),
+  asyncHandler(studentController.advanceStudentRide),
+);
