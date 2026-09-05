@@ -11,6 +11,20 @@ import { carpoolError } from './carpoolVehicleService.js';
 import { requireOwnedRide } from './carpoolRideService.js';
 import * as settlement from './carpoolSettlement.js';
 import { notifyCarpool } from './carpoolNotifications.js';
+import { runInTransaction } from './transaction.js';
+
+/**
+ * Send notifications only after a transaction has committed.
+ *
+ * runInTransaction replays its callback on a transient conflict, so a push sent
+ * from inside would go out again on every attempt — and could announce a booking
+ * that then failed to commit at all.
+ */
+const flushNotifications = async (queued = []) => {
+  for (const [type, context] of queued) {
+    await notifyCarpool(type, context);
+  }
+};
 
 const BOOKABLE_RIDE_STATUSES = [CARPOOL_RIDE_STATUS.PUBLISHED];
 
@@ -42,9 +56,14 @@ export const serializeBooking = (booking, { ride = null } = {}) => ({
     : {}),
 });
 
-/** Passenger identity on a request list — no phone, no email (§42). */
-const serializePassenger = (user) => ({
-  id: String(user?._id || user),
+/**
+ * Identity shown to the other party — no phone, no email (§42).
+ *
+ * `fallbackId` keeps the reference intact when populate resolves to null,
+ * which happens if the account was since deleted.
+ */
+const serializePassenger = (user, fallbackId = null) => ({
+  id: String(user?._id || (user && !user.name ? user : '') || fallbackId || ''),
   name: user?.name || '',
   profileImage: user?.profileImage || '',
 });
@@ -81,7 +100,7 @@ const reserveSeats = async ({ rideId, seats, session }) => {
       $expr: { $gte: [{ $subtract: ['$offeredSeats', '$bookedSeats'] }, seats] },
     },
     { $inc: { bookedSeats: seats } },
-    { new: true, session },
+    { returnDocument: 'after', session },
   );
 
   if (!ride) {
@@ -103,16 +122,22 @@ const releaseSeats = async ({ rideId, seats, session }) => {
     return;
   }
 
-  const ride = await CarpoolRide.findOneAndUpdate(
-    { _id: rideId },
-    // Clamped at zero: a double release must never drive the counter negative (§47).
-    [{
-      $set: {
-        bookedSeats: { $max: [0, { $subtract: ['$bookedSeats', seats] }] },
-      },
-    }],
-    { new: true, session },
+  // Guarded so the counter can never be driven below zero (§47); if fewer seats
+  // are held than we are releasing, the state is already inconsistent and is
+  // clamped rather than made worse.
+  let ride = await CarpoolRide.findOneAndUpdate(
+    { _id: rideId, bookedSeats: { $gte: seats } },
+    { $inc: { bookedSeats: -seats } },
+    { returnDocument: 'after', session },
   );
+
+  if (!ride) {
+    ride = await CarpoolRide.findOneAndUpdate(
+      { _id: rideId },
+      { $set: { bookedSeats: 0 } },
+      { returnDocument: 'after', session },
+    );
+  }
 
   if (ride && ride.status === CARPOOL_RIDE_STATUS.FULL && ride.bookedSeats < ride.offeredSeats) {
     ride.status = CARPOOL_RIDE_STATUS.PUBLISHED;
@@ -137,10 +162,11 @@ export const createBooking = async ({ rideId, userId, payload }) => {
     );
   }
 
-  const session = await mongoose.startSession();
+  const notifications = [];
 
-  try {
-    session.startTransaction();
+  const result = await runInTransaction(async (session) => {
+    // Cleared per attempt so a retry does not re-queue the previous attempt's work.
+    notifications.length = 0;
 
     const ride = await CarpoolRide.findById(rideId).session(session);
 
@@ -219,17 +245,15 @@ export const createBooking = async ({ rideId, userId, payload }) => {
       throw error;
     }
 
-    await session.commitTransaction();
 
-    await notifyCarpool(instant ? 'CARPOOL_REQUEST_ACCEPTED' : 'CARPOOL_RIDE_REQUEST', { ride, booking });
+    notifications.push([instant ? 'CARPOOL_REQUEST_ACCEPTED' : 'CARPOOL_RIDE_REQUEST', { ride, booking }]);
 
     return serializeBooking(booking, { ride });
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
+  });
+
+  await flushNotifications(notifications);
+
+  return result;
 };
 
 const requireBookingForDriver = async ({ bookingId, userId, session }) => {
@@ -251,10 +275,11 @@ const requireBookingForDriver = async ({ bookingId, userId, session }) => {
 };
 
 export const acceptBooking = async ({ bookingId, userId }) => {
-  const session = await mongoose.startSession();
+  const notifications = [];
 
-  try {
-    session.startTransaction();
+  const result = await runInTransaction(async (session) => {
+    // Cleared per attempt so a retry does not re-queue the previous attempt's work.
+    notifications.length = 0;
 
     const booking = await requireBookingForDriver({ bookingId, userId, session });
 
@@ -282,23 +307,22 @@ export const acceptBooking = async ({ bookingId, userId }) => {
     booking.seatsHeld = booking.seatCount;
     await booking.save({ session });
 
-    await session.commitTransaction();
-    await notifyCarpool('CARPOOL_REQUEST_ACCEPTED', { ride, booking });
+    notifications.push(['CARPOOL_REQUEST_ACCEPTED', { ride, booking }]);
 
     return serializeBooking(booking, { ride });
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
+  });
+
+  await flushNotifications(notifications);
+
+  return result;
 };
 
 export const rejectBooking = async ({ bookingId, userId, reason }) => {
-  const session = await mongoose.startSession();
+  const notifications = [];
 
-  try {
-    session.startTransaction();
+  const result = await runInTransaction(async (session) => {
+    // Cleared per attempt so a retry does not re-queue the previous attempt's work.
+    notifications.length = 0;
 
     const booking = await requireBookingForDriver({ bookingId, userId, session });
 
@@ -318,23 +342,22 @@ export const rejectBooking = async ({ bookingId, userId, reason }) => {
     booking.cancellationReason = String(reason || '').trim();
     await booking.save({ session });
 
-    await session.commitTransaction();
-    await notifyCarpool('CARPOOL_REQUEST_REJECTED', { booking });
+    notifications.push(['CARPOOL_REQUEST_REJECTED', { booking }]);
 
     return serializeBooking(booking);
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
+  });
+
+  await flushNotifications(notifications);
+
+  return result;
 };
 
 export const cancelBookingByPassenger = async ({ bookingId, userId, reason }) => {
-  const session = await mongoose.startSession();
+  const notifications = [];
 
-  try {
-    session.startTransaction();
+  const result = await runInTransaction(async (session) => {
+    // Cleared per attempt so a retry does not re-queue the previous attempt's work.
+    notifications.length = 0;
 
     if (!mongoose.Types.ObjectId.isValid(String(bookingId || ''))) {
       throw carpoolError(404, CARPOOL_ERRORS.BOOKING_NOT_FOUND, 'Booking not found.');
@@ -369,16 +392,14 @@ export const cancelBookingByPassenger = async ({ bookingId, userId, reason }) =>
     booking.seatsHeld = 0;
     await booking.save({ session });
 
-    await session.commitTransaction();
-    await notifyCarpool('CARPOOL_BOOKING_CANCELLED', { booking });
+    notifications.push(['CARPOOL_BOOKING_CANCELLED', { booking }]);
 
     return serializeBooking(booking);
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
+  });
+
+  await flushNotifications(notifications);
+
+  return result;
 };
 
 /**
@@ -387,10 +408,11 @@ export const cancelBookingByPassenger = async ({ bookingId, userId, reason }) =>
  * passengers believing they still have a seat.
  */
 export const cancelRide = async ({ rideId, userId, reason }) => {
-  const session = await mongoose.startSession();
+  const notifications = [];
 
-  try {
-    session.startTransaction();
+  const result = await runInTransaction(async (session) => {
+    // Cleared per attempt so a retry does not re-queue the previous attempt's work.
+    notifications.length = 0;
 
     const ride = await requireOwnedRide({ rideId, userId }, { session });
 
@@ -422,19 +444,17 @@ export const cancelRide = async ({ rideId, userId, reason }) => {
     ride.bookedSeats = 0;
     await ride.save({ session });
 
-    await session.commitTransaction();
 
     for (const booking of affected) {
-      await notifyCarpool('CARPOOL_RIDE_CANCELLED', { ride, booking });
+      notifications.push(['CARPOOL_RIDE_CANCELLED', { ride, booking }]);
     }
 
     return { rideId: String(ride._id), status: ride.status, cancelledBookings: affected.length };
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
+  });
+
+  await flushNotifications(notifications);
+
+  return result;
 };
 
 export const listRideRequests = async ({ rideId, userId, status }) => {
@@ -479,133 +499,36 @@ export const getBooking = async ({ bookingId, userId }) => {
     throw carpoolError(404, CARPOOL_ERRORS.BOOKING_NOT_FOUND, 'Booking not found.');
   }
 
-  const booking = await CarpoolBooking.findById(bookingId)
-    .populate('rideId')
-    .populate('passengerId', 'name profileImage')
-    .populate('driverId', 'name profileImage');
+  const booking = await CarpoolBooking.findById(bookingId);
 
   if (!booking) {
     throw carpoolError(404, CARPOOL_ERRORS.BOOKING_NOT_FOUND, 'Booking not found.');
   }
 
-  const isPassenger = String(booking.passengerId?._id || booking.passengerId) === String(userId);
-  const isHost = String(booking.driverId?._id || booking.driverId) === String(userId);
+  // Authorize against the raw references before populating. Populating first
+  // would resolve a missing or deleted user to null and lock the other party out
+  // of their own booking.
+  const isPassenger = String(booking.passengerId) === String(userId);
+  const isHost = String(booking.driverId) === String(userId);
 
   // Only the two people on this booking may read it (§43).
   if (!isPassenger && !isHost) {
     throw carpoolError(404, CARPOOL_ERRORS.BOOKING_NOT_FOUND, 'Booking not found.');
   }
 
+  const passengerRef = String(booking.passengerId);
+  const hostRef = String(booking.driverId);
+
+  await booking.populate([
+    { path: 'rideId' },
+    { path: 'passengerId', select: 'name profileImage' },
+    { path: 'driverId', select: 'name profileImage' },
+  ]);
+
   return {
     ...serializeBooking(booking, { ride: booking.rideId }),
-    passenger: serializePassenger(booking.passengerId),
-    host: serializePassenger(booking.driverId),
+    passenger: serializePassenger(booking.passengerId, passengerRef),
+    host: serializePassenger(booking.driverId, hostRef),
     viewerRole: isHost ? 'host' : 'passenger',
   };
-};
-
-/**
- * Host starts the ride (§30). Accepted bookings ride with it; anything still
- * pending is declined, because there is no longer a trip to join.
- */
-export const startRide = async ({ rideId, userId }) => {
-  const session = await mongoose.startSession();
-
-  try {
-    session.startTransaction();
-
-    const ride = await requireOwnedRide({ rideId, userId }, { session });
-
-    if (![CARPOOL_RIDE_STATUS.PUBLISHED, CARPOOL_RIDE_STATUS.FULL].includes(ride.status)) {
-      throw carpoolError(409, CARPOOL_ERRORS.RIDE_NOT_AVAILABLE, `A ${ride.status.toLowerCase()} ride cannot be started.`);
-    }
-
-    const stranded = await CarpoolBooking.find({
-      rideId: ride._id,
-      status: CARPOOL_BOOKING_STATUS.PENDING,
-    }).session(session);
-
-    for (const booking of stranded) {
-      booking.status = CARPOOL_BOOKING_STATUS.REJECTED;
-      booking.rejectedAt = new Date();
-      booking.isActive = false;
-      booking.cancellationReason = 'The ride started before this request was answered.';
-      await booking.save({ session });
-    }
-
-    ride.status = CARPOOL_RIDE_STATUS.STARTED;
-    ride.startedAt = new Date();
-    await ride.save({ session });
-
-    const riding = await CarpoolBooking.find({
-      rideId: ride._id,
-      status: CARPOOL_BOOKING_STATUS.ACCEPTED,
-    }).session(session);
-
-    await session.commitTransaction();
-
-    for (const booking of riding) {
-      await notifyCarpool('CARPOOL_RIDE_STARTED', { ride, booking });
-    }
-
-    for (const booking of stranded) {
-      await notifyCarpool('CARPOOL_REQUEST_REJECTED', { ride, booking });
-    }
-
-    return { rideId: String(ride._id), status: ride.status, startedAt: ride.startedAt };
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
-};
-
-/** Host completes the ride (§31). Accepted bookings become COMPLETED with it. */
-export const completeRide = async ({ rideId, userId }) => {
-  const session = await mongoose.startSession();
-
-  try {
-    session.startTransaction();
-
-    const ride = await requireOwnedRide({ rideId, userId }, { session });
-
-    if (ride.status !== CARPOOL_RIDE_STATUS.STARTED) {
-      throw carpoolError(409, CARPOOL_ERRORS.RIDE_NOT_AVAILABLE, 'Only a started ride can be completed.');
-    }
-
-    const bookings = await CarpoolBooking.find({
-      rideId: ride._id,
-      status: CARPOOL_BOOKING_STATUS.ACCEPTED,
-    }).session(session);
-
-    const payment = await settlement.onRideCompleted({ ride, bookings });
-
-    for (const booking of bookings) {
-      booking.status = CARPOOL_BOOKING_STATUS.COMPLETED;
-      booking.paymentStatus = payment.paymentStatus;
-      booking.completedAt = new Date();
-      // The trip is over, so the seat is no longer held and the passenger is
-      // free to book this host again.
-      booking.isActive = false;
-      await booking.save({ session });
-    }
-
-    ride.status = CARPOOL_RIDE_STATUS.COMPLETED;
-    ride.completedAt = new Date();
-    await ride.save({ session });
-
-    await session.commitTransaction();
-
-    for (const booking of bookings) {
-      await notifyCarpool('CARPOOL_RIDE_COMPLETED', { ride, booking });
-    }
-
-    return { rideId: String(ride._id), status: ride.status, completedBookings: bookings.length };
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
-  }
 };
