@@ -381,6 +381,10 @@ const normalizeMedicinePayload = (medicine = {}) => ({
   instructions: String(medicine.instructions || '').trim(),
 });
 
+const STUDENT_TRACKING_TOKEN_TTL_HOURS = Number(process.env.STUDENT_RIDE_SHARE_TTL_HOURS) > 0
+  ? Number(process.env.STUDENT_RIDE_SHARE_TTL_HOURS)
+  : 12;
+
 const normalizeStudentSafetyPayload = (studentSafety = {}) => {
   const isStudentRide = Boolean(studentSafety?.isStudentRide);
   const guardianContacts = Array.isArray(studentSafety?.guardianContacts)
@@ -396,8 +400,14 @@ const normalizeStudentSafetyPayload = (studentSafety = {}) => {
   return {
     isStudentRide,
     guardianContacts,
-    trackingToken: isStudentRide ? crypto.randomBytes(16).toString('hex') : '',
+    trackingToken: isStudentRide ? crypto.randomBytes(32).toString('hex') : '',
     trackingLinkSentAt: null,
+    // Backstop only — getRideByTrackingToken also refuses once the ride leaves an
+    // active status, so a finished ride stops broadcasting well before this.
+    trackingTokenExpiresAt: isStudentRide
+      ? new Date(Date.now() + STUDENT_TRACKING_TOKEN_TTL_HOURS * 60 * 60 * 1000)
+      : null,
+    trackingTokenRevokedAt: null,
     studentOtpVerifiedAt: null,
   };
 };
@@ -1300,6 +1310,29 @@ export const getRideDetails = async (rideId) => {
   return ride;
 };
 
+// A share link reaches anyone the guardian forwards it to, so this projection is
+// deliberately narrow: enough to recognise the car at the kerb, nothing that
+// identifies the driver off the road. Never widen it to the populated driver
+// document — that carries the driver's phone number.
+const serializePublicTrackingDriver = (driver) => {
+  if (!driver || typeof driver !== 'object') {
+    return null;
+  }
+
+  return {
+    name: driver.name || '',
+    profileImage: driver.profileImage || '',
+    rating: driver.rating || '',
+    vehicleType: driver.vehicleType || '',
+    vehicleNumber: driver.vehicleNumber || '',
+    vehicleColor: driver.vehicleColor || '',
+    vehicleMake: driver.vehicleMake || '',
+    vehicleModel: driver.vehicleModel || '',
+  };
+};
+
+const TRACKABLE_PUBLIC_STATUSES = [RIDE_STATUS.SEARCHING, RIDE_STATUS.ACCEPTED, RIDE_STATUS.ONGOING];
+
 export const getRideByTrackingToken = async (token) => {
   const trimmedToken = String(token || '').trim();
   if (!trimmedToken) {
@@ -1307,10 +1340,28 @@ export const getRideByTrackingToken = async (token) => {
   }
 
   const ride = await Ride.findOne({ 'studentSafety.trackingToken': trimmedToken })
-    .populate('userId', 'name phone')
-    .populate('driverId', 'name phone profileImage vehicleType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating');
+    .populate('driverId', 'name profileImage vehicleType vehicleNumber vehicleColor vehicleMake vehicleModel rating');
 
+  // Every rejection below returns the same 404: a caller must not be able to tell
+  // an unknown token from a revoked, expired or finished one.
   if (!ride) {
+    throw new ApiError(404, 'Tracking link not found');
+  }
+
+  const safety = ride.studentSafety || {};
+  const now = Date.now();
+  const expiresAt = safety.trackingTokenExpiresAt ? new Date(safety.trackingTokenExpiresAt).getTime() : null;
+
+  if (safety.trackingTokenRevokedAt) {
+    throw new ApiError(404, 'Tracking link not found');
+  }
+
+  if (expiresAt && expiresAt <= now) {
+    throw new ApiError(404, 'Tracking link not found');
+  }
+
+  // Tracking stops when the ride does — a completed ride must not keep broadcasting.
+  if (!TRACKABLE_PUBLIC_STATUSES.includes(ride.status)) {
     throw new ApiError(404, 'Tracking link not found');
   }
 
@@ -1321,7 +1372,7 @@ export const getRideByTrackingToken = async (token) => {
     liveStatus: realtime.liveStatus,
     pickupAddress: realtime.pickupAddress,
     dropAddress: realtime.dropAddress,
-    driver: realtime.driver,
+    driver: serializePublicTrackingDriver(ride.driverId),
     vehicleIconType: realtime.vehicleIconType,
     lastDriverLocation: realtime.lastDriverLocation,
     startedAt: ride.startedAt,
@@ -1784,7 +1835,6 @@ export const updateRideLifecycle = async ({ rideId, driverId, nextStatus, paymen
 
   if (nextStatus === RIDE_LIVE_STATUS.STARTED && !ride.startedAt) {
     ride.startedAt = new Date();
-    ride.studentSafety.studentOtpVerifiedAt = new Date();
   }
 
   if (paymentMethod !== undefined && paymentMethod !== null && String(paymentMethod).trim()) {

@@ -246,6 +246,17 @@ const rideSchema = new mongoose.Schema(
         type: Date,
         default: null,
       },
+      trackingTokenExpiresAt: {
+        type: Date,
+        default: null,
+      },
+      trackingTokenRevokedAt: {
+        type: Date,
+        default: null,
+      },
+      // Set only by a real OTP verification. Until the v2 student-ride module
+      // ships that check, nothing writes it — an unverified pickup must read as
+      // unverified rather than being stamped when the driver starts the ride.
       studentOtpVerifiedAt: {
         type: Date,
         default: null,
