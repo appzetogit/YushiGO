@@ -660,6 +660,61 @@ Notifications serialize as `{ id, title, body, image, sentAt, serviceLocationId 
 Call `POST /users/fcm-token` after login **and** on every `onTokenRefresh`. Without it the user
 gets zero push.
 
+## 8b. Student Ride — students, guardians, saved locations
+
+All `user`-authenticated. A student is registered **once** and reused for every later ride; the
+booking call will take a `studentId`, never the student's details again.
+
+| Method | Path | Body |
+|---|---|---|
+| GET | `/student-ride/students` | `?includeInactive=true` to show deactivated |
+| POST | `/student-ride/students` | see below |
+| GET | `/student-ride/students/:studentId` | |
+| PATCH | `/student-ride/students/:studentId` | any subset of the create fields |
+| DELETE | `/student-ride/students/:studentId` | deactivates — history is preserved |
+| POST | `/student-ride/students/:studentId/activate` | undo a deactivation |
+| GET · POST | `/student-ride/students/:studentId/guardians` | |
+| PATCH · DELETE | `/student-ride/guardians/:guardianId` | |
+| GET · POST | `/student-ride/students/:studentId/locations` | |
+| GET · PATCH · DELETE | `/student-ride/locations/:locationId` | |
+
+**Create a student** — `dateOfBirth` is mandatory:
+
+```json
+{ "name": "Aarohi Sharma", "dateOfBirth": "2014-08-12", "gender": "female",
+  "schoolName": "St. Teresa's Convent School", "className": "8-A",
+  "guardians": [ { "name": "Varun Sharma", "mobile": "9876543210", "relationship": "FATHER" } ] }
+```
+
+**Age is computed by the server and cannot be set.** Send `dateOfBirth`; an `age` in the payload is
+ignored. The response carries derived `age` and `isMinor`.
+
+**The under-18 rule is enforced server-side**, so build the UI to match or the call fails:
+
+- creating a student under 18 with no guardian → `422 GUARDIAN_REQUIRED`
+- editing a DOB so the student becomes under 18 with no guardian on file → `422 GUARDIAN_REQUIRED`
+- deleting the last guardian of a student under 18 → `422 LAST_GUARDIAN_REQUIRED`
+
+`relationship` is one of `FATHER`, `MOTHER`, `GUARDIAN`, `OTHER`. The first guardian added is
+automatically primary; setting `isPrimary: true` on another demotes the previous one.
+
+**Saved locations.** `label` is one of `HOME`, `SCHOOL`, `TUITION`, `COLLEGE`, `OTHER`:
+
+```json
+{ "label": "SCHOOL", "customName": "St. Teresa's Convent School",
+  "address": "Knowledge Park II, Greater Noida",
+  "latitude": 28.46, "longitude": 77.51, "placeId": "google-place-id" }
+```
+
+`latitude` and `longitude` must be sent together, even on a PATCH — updating one alone is a `422`.
+
+**Errors** carry a stable `code` alongside `message`; branch on the code, not the copy:
+`STUDENT_NOT_FOUND`, `GUARDIAN_REQUIRED`, `LAST_GUARDIAN_REQUIRED`, `INVALID_DATE_OF_BIRTH`,
+`INVALID_LOCATION`, `LOCATION_NOT_FOUND`, `GUARDIAN_NOT_FOUND`, `STUDENT_INACTIVE`.
+
+Anything belonging to another user returns **404, not 403** — deliberately, so ids cannot be probed.
+Treat it as "not found" in the UI.
+
 ## 9. Parcel and medicine delivery
 
 Same ride engine underneath — `serviceType` is `parcel` / `medicine` and a `Delivery` doc is
