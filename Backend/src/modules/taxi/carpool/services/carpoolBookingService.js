@@ -12,6 +12,9 @@ import { requireOwnedRide } from './carpoolRideService.js';
 import * as settlement from './carpoolSettlement.js';
 import { notifyCarpool } from './carpoolNotifications.js';
 import { runInTransaction } from './transaction.js';
+import { recordCompletedTrips } from './carpoolRatingService.js';
+import { emitCarpoolRideStatus } from '../socket/carpoolSocketHandler.js';
+import { getSocketServer } from '../../services/dispatchService.js';
 
 /**
  * Send notifications only after a transaction has committed.
@@ -539,6 +542,7 @@ export const getBooking = async ({ bookingId, userId }) => {
  */
 export const startRide = async ({ rideId, userId }) => {
   const notifications = [];
+  let startedRide = null;
 
   const result = await runInTransaction(async (session) => {
     notifications.length = 0;
@@ -580,10 +584,13 @@ export const startRide = async ({ rideId, userId }) => {
       notifications.push(['CARPOOL_RIDE_STARTED', { ride, booking }]);
     }
 
+    startedRide = ride;
+
     return { rideId: String(ride._id), status: ride.status, startedAt: ride.startedAt };
   });
 
   await flushNotifications(notifications);
+  emitCarpoolRideStatus(getSocketServer(), startedRide);
 
   return result;
 };
@@ -591,6 +598,7 @@ export const startRide = async ({ rideId, userId }) => {
 /** Host completes the ride (§31). Accepted bookings become COMPLETED with it. */
 export const completeRide = async ({ rideId, userId }) => {
   const notifications = [];
+  let completedRide = null;
 
   const result = await runInTransaction(async (session) => {
     notifications.length = 0;
@@ -623,10 +631,22 @@ export const completeRide = async ({ rideId, userId }) => {
     ride.completedAt = new Date();
     await ride.save({ session });
 
+    // Counted here rather than on rating, because a trip happened whether or not
+    // anyone leaves a review.
+    await recordCompletedTrips({
+      hostId: ride.driverId,
+      passengerIds: bookings.map((booking) => booking.passengerId),
+      session,
+    });
+
+    completedRide = ride;
+
     return { rideId: String(ride._id), status: ride.status, completedBookings: bookings.length };
   });
 
   await flushNotifications(notifications);
+  // Tells anyone still watching the ride to stop tracking (§32).
+  emitCarpoolRideStatus(getSocketServer(), completedRide);
 
   return result;
 };

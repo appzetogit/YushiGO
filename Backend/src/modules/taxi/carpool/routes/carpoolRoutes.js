@@ -33,3 +33,11 @@ carpoolRouter.get('/carpool/bookings/:bookingId', asUser, asyncHandler(carpool.g
 carpoolRouter.post('/carpool/bookings/:bookingId/accept', asUser, asyncHandler(carpool.acceptBooking));
 carpoolRouter.post('/carpool/bookings/:bookingId/reject', asUser, asyncHandler(carpool.rejectBooking));
 carpoolRouter.post('/carpool/bookings/:bookingId/cancel', asUser, asyncHandler(carpool.cancelBooking));
+
+// Home, trips and reputation.
+carpoolRouter.get('/carpool/home', asUser, asyncHandler(carpool.getHome));
+carpoolRouter.get('/carpool/my-trips', asUser, asyncHandler(carpool.getMyTrips));
+carpoolRouter.post('/carpool/ratings', asUser, asyncHandler(carpool.createRating));
+carpoolRouter.get('/carpool/ratings/pending', asUser, asyncHandler(carpool.listPendingRatings));
+carpoolRouter.get('/carpool/me/stats', asUser, asyncHandler(carpool.getMyStats));
+carpoolRouter.get('/carpool/users/:userId/ratings', asUser, asyncHandler(carpool.listUserRatings));

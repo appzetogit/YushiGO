@@ -1,6 +1,8 @@
 import * as vehicleService from '../services/carpoolVehicleService.js';
 import * as rideService from '../services/carpoolRideService.js';
 import * as bookingService from '../services/carpoolBookingService.js';
+import * as ratingService from '../services/carpoolRatingService.js';
+import * as tripsService from '../services/carpoolTripsService.js';
 
 export const listVehicles = async (req, res) => {
   const vehicles = await vehicleService.listVehicles({ userId: req.auth.sub });
@@ -153,4 +155,43 @@ export const completeRide = async (req, res) => {
   });
 
   res.json({ success: true, message: 'Ride completed', data: result });
+};
+
+export const createRating = async (req, res) => {
+  const rating = await ratingService.createRating({ userId: req.auth.sub, payload: req.body });
+  res.status(201).json({ success: true, data: rating });
+};
+
+export const listPendingRatings = async (req, res) => {
+  const pending = await ratingService.listRatableBookings({ userId: req.auth.sub });
+  res.json({ success: true, data: { pending } });
+};
+
+export const getMyStats = async (req, res) => {
+  const stats = await ratingService.getUserStats(req.auth.sub);
+  res.json({ success: true, data: stats });
+};
+
+export const listUserRatings = async (req, res) => {
+  const ratings = await ratingService.listRatingsForUser({
+    userId: req.params.userId,
+    role: req.query?.role,
+  });
+
+  res.json({ success: true, data: { ratings } });
+};
+
+export const getMyTrips = async (req, res) => {
+  const trips = await tripsService.getMyTrips({
+    userId: req.auth.sub,
+    type: String(req.query?.type || 'all').toLowerCase(),
+    status: req.query?.status,
+  });
+
+  res.json({ success: true, data: trips });
+};
+
+export const getHome = async (req, res) => {
+  const home = await tripsService.getCarpoolHome({ userId: req.auth.sub });
+  res.json({ success: true, data: home });
 };

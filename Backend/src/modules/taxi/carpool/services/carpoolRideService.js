@@ -17,6 +17,7 @@ import {
   evaluateRouteMatch,
   rankMatches,
 } from './routeMatching.js';
+import { getStatsForUsers } from './carpoolRatingService.js';
 
 const parsePlace = (value, field) => {
   const name = String(value?.name || '').trim();
@@ -95,7 +96,8 @@ const serializeHost = (user, stats = {}) => ({
   name: user?.name || '',
   profileImage: user?.profileImage || '',
   rating: stats.rating ?? null,
-  totalTrips: stats.totalTrips ?? 0,
+  ratingCount: stats.ratingCount ?? 0,
+  totalTrips: stats.trips ?? 0,
   phoneVerified: Boolean(user?.phoneVerified ?? user?.isPhoneVerified ?? false),
   profileVerified: Boolean(user?.profileVerified ?? false),
 });
@@ -132,10 +134,12 @@ export const serializeRideForOwner = (ride, { vehicle } = {}) => ({
   createdAt: ride.createdAt,
 });
 
-export const serializeRidePublic = (ride, { match = null } = {}) => ({
+export const serializeRidePublic = (ride, { match = null, hostStats = null } = {}) => ({
   rideId: String(ride._id),
   status: ride.status,
-  host: ride.driverId && typeof ride.driverId === 'object' ? serializeHost(ride.driverId) : null,
+  host: ride.driverId && typeof ride.driverId === 'object'
+    ? serializeHost(ride.driverId, hostStats || {})
+    : null,
   route: { origin: ride.origin?.name || '', destination: ride.destination?.name || '' },
   pickup: ride.pickup,
   drop: ride.drop,
@@ -254,7 +258,14 @@ export const getRideById = async ({ rideId, userId }) => {
     return { ...serializeRideForOwner(ride, { vehicle: ride.vehicleId }), isOwner: true };
   }
 
-  return { ...serializeRidePublic(ride), isOwner: false };
+  const stats = await getStatsForUsers([ride.driverId?._id || ride.driverId]);
+
+  return {
+    ...serializeRidePublic(ride, {
+      hostStats: stats.get(String(ride.driverId?._id || ride.driverId)) || null,
+    }),
+    isOwner: false,
+  };
 };
 
 /**
@@ -333,7 +344,13 @@ export const searchRides = async ({ userId, query }) => {
     }
   }
 
-  return rankMatches(matched).map(({ ride, match }) => serializeRidePublic(ride, { match }));
+  const ranked = rankMatches(matched);
+  const statsByHost = await getStatsForUsers(ranked.map(({ ride }) => ride.driverId?._id || ride.driverId));
+
+  return ranked.map(({ ride, match }) => serializeRidePublic(ride, {
+    match,
+    hostStats: statsByHost.get(String(ride.driverId?._id || ride.driverId)) || null,
+  }));
 };
 
 export const requireOwnedRide = async ({ rideId, userId }, { session = null } = {}) => {

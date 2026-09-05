@@ -26,6 +26,7 @@ import { findZoneByPickup } from '../services/matchingService.js';
 import { acceptRideAssignment, createRideRecord, getRideRoom, submitRideBid } from '../services/rideService.js';
 import { SOCKET_EVENTS } from './events.js';
 import { registerRideSocketHandlers } from './handlers/rideSocketHandler.js';
+import { registerCarpoolSocketHandlers } from '../carpool/socket/carpoolSocketHandler.js';
 import { authorizeRideRoomAccess } from './middleware/rideRoomAuth.js';
 import { attachSocketAuth } from './middleware/socketAuth.js';
 import { clearDriverRoute } from './services/driverRouteService.js';
@@ -177,6 +178,7 @@ export const configureTaxiSocketServer = (httpServer) => {
     );
 
     registerRideSocketHandlers({ io, socket, onAsync });
+    registerCarpoolSocketHandlers({ io, socket, onAsync });
 
     socket.on(
       'locationUpdate',
