@@ -25,6 +25,10 @@ export const errorHandler = (error, _req, res, _next) => {
 
   return res.status(statusCode).json({
     success: false,
+    // Only present when a thrower attached a stable string code (the Student Ride
+    // module does). Numeric codes here come from the Mongo driver, not from us,
+    // and must not be surfaced as an API contract.
+    code: typeof error.code === 'string' ? error.code : undefined,
     message: error.message || 'Internal server error',
     details: error instanceof ApiError ? error.details : undefined,
   });
