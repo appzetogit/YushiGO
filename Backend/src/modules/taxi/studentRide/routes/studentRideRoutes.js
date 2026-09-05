@@ -1,7 +1,21 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { authenticate } from '../../middlewares/authMiddleware.js';
-import { otpSendRateLimit, otpVerifyRateLimit } from '../../middlewares/rateLimitMiddleware.js';
+import {
+  createRateLimitMiddleware,
+  otpSendRateLimit,
+  otpVerifyRateLimit,
+} from '../../middlewares/rateLimitMiddleware.js';
+
+/**
+ * Guards the public tracking endpoint against someone walking the token space
+ * (§51). Generous enough that a parent refreshing the page is never blocked.
+ */
+const publicTrackingRateLimit = createRateLimitMiddleware({
+  scope: 'student-ride-public-tracking',
+  windowMs: 60 * 1000,
+  max: 60,
+});
 import * as studentController from '../controllers/studentController.js';
 
 export const studentRideRouter = Router();
@@ -48,4 +62,27 @@ studentRideRouter.post(
   '/student-ride/rides/:studentRideId/status',
   authenticate(['driver']),
   asyncHandler(studentController.advanceStudentRide),
+);
+
+// Trip sharing.
+studentRideRouter.post('/student-ride/rides/:studentRideId/share', asUser, asyncHandler(studentController.createShareLink));
+studentRideRouter.get('/student-ride/rides/:studentRideId/share', asUser, asyncHandler(studentController.listShareLinks));
+studentRideRouter.delete('/student-ride/rides/:studentRideId/share/:shareId', asUser, asyncHandler(studentController.revokeShareLink));
+
+// SOS.
+studentRideRouter.post('/student-ride/rides/:studentRideId/sos', asUser, asyncHandler(studentController.triggerSos));
+studentRideRouter.get('/student-ride/rides/:studentRideId/sos', asUser, asyncHandler(studentController.listRideEmergencies));
+studentRideRouter.patch('/student-ride/sos/:emergencyId', asUser, asyncHandler(studentController.resolveEmergency));
+
+/**
+ * Public tracking — deliberately unauthenticated (§29).
+ *
+ * A guardian opens this from a forwarded link with no account and no app. The
+ * share token is the only credential, and it is rate limited because the
+ * endpoint is reachable by anyone who can guess a URL.
+ */
+studentRideRouter.get(
+  '/public/student-ride/share/:token',
+  publicTrackingRateLimit,
+  asyncHandler(studentController.getPublicTracking),
 );

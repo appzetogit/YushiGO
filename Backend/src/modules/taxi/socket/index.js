@@ -27,6 +27,11 @@ import { acceptRideAssignment, createRideRecord, getRideRoom, submitRideBid } fr
 import { SOCKET_EVENTS } from './events.js';
 import { registerRideSocketHandlers } from './handlers/rideSocketHandler.js';
 import { registerCarpoolSocketHandlers } from '../carpool/socket/carpoolSocketHandler.js';
+import {
+  SHARE_VIEWER_ROLE,
+  registerShareViewerHandlers,
+  registerStudentRideSocketHandlers,
+} from '../studentRide/socket/studentRideSocketHandler.js';
 import { authorizeRideRoomAccess } from './middleware/rideRoomAuth.js';
 import { attachSocketAuth } from './middleware/socketAuth.js';
 import { clearDriverRoute } from './services/driverRouteService.js';
@@ -92,6 +97,17 @@ export const configureTaxiSocketServer = (httpServer) => {
 
   io.on('connection', async (socket) => {
     const identity = socket.auth;
+
+    /**
+     * A share-token viewer is not a user of the platform. It is given the
+     * watch-only handlers and nothing else — returning here keeps it out of the
+     * support rooms, ride chat, dispatch events and every authenticated handler
+     * registered below.
+     */
+    if (identity.role === SHARE_VIEWER_ROLE) {
+      registerShareViewerHandlers({ socket });
+      return;
+    }
 
     addSocketSubscriptions(socket, { role: identity.role, entityId: identity.sub });
 
@@ -179,6 +195,7 @@ export const configureTaxiSocketServer = (httpServer) => {
 
     registerRideSocketHandlers({ io, socket, onAsync });
     registerCarpoolSocketHandlers({ io, socket, onAsync });
+    registerStudentRideSocketHandlers({ socket, onAsync });
 
     socket.on(
       'locationUpdate',

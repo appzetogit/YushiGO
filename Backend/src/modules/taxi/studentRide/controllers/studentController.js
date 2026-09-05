@@ -3,6 +3,9 @@ import * as guardianService from '../services/guardianService.js';
 import * as savedLocationService from '../services/savedLocationService.js';
 import * as rideService from '../services/studentRideService.js';
 import * as dispatch from '../services/dispatchAdapter.js';
+import * as shareService from '../services/shareService.js';
+import * as emergencyService from '../services/emergencyService.js';
+import * as notifications from '../services/studentRideNotifications.js';
 
 export const listStudents = async (req, res) => {
   const students = await studentService.listStudents({
@@ -232,4 +235,89 @@ export const advanceStudentRide = async (req, res) => {
   });
 
   res.json({ success: true, data: ride });
+};
+
+export const createShareLink = async (req, res) => {
+  const share = await shareService.createShareLink({
+    studentRideId: req.params.studentRideId,
+    userId: req.auth.sub,
+  });
+
+  // Sent to guardians as well as returned, so the parent does not have to
+  // forward it manually for the people already on file.
+  const [ride, contacts] = await Promise.all([
+    rideService.getStudentRide({ studentRideId: req.params.studentRideId, userId: req.auth.sub }),
+    rideService.getRideEmergencyContacts(req.params.studentRideId),
+  ]);
+
+  const notified = await notifications.sendTrackingLinkToGuardians({
+    contacts,
+    studentName: ride.student?.name,
+    shareUrl: share.shareUrl,
+  }).catch(() => 0);
+
+  res.status(201).json({ success: true, data: { ...share, guardiansNotified: notified } });
+};
+
+export const listShareLinks = async (req, res) => {
+  const shares = await shareService.listShareLinks({
+    studentRideId: req.params.studentRideId,
+    userId: req.auth.sub,
+  });
+
+  res.json({ success: true, data: { shares } });
+};
+
+export const revokeShareLink = async (req, res) => {
+  const result = await shareService.revokeShareLink({
+    studentRideId: req.params.studentRideId,
+    shareId: req.params.shareId,
+    userId: req.auth.sub,
+  });
+
+  res.json({ success: true, data: result });
+};
+
+/** Public — no authentication. Everything it returns is in shareService's allow-list. */
+export const getPublicTracking = async (req, res) => {
+  const tracking = await shareService.getPublicTracking(req.params.token);
+
+  // Never cached: a stale copy of a child's position is worse than none, and a
+  // shared link may pass through intermediaries.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.json({ success: true, data: tracking });
+};
+
+export const triggerSos = async (req, res) => {
+  const emergency = await emergencyService.triggerSos({
+    studentRideId: req.params.studentRideId,
+    actor: { role: 'user', id: req.auth.sub },
+    latitude: req.body?.latitude,
+    longitude: req.body?.longitude,
+    type: req.body?.type,
+    notify: async ({ emergency: created, student, contacts }) =>
+      notifications.notifyEmergencyContacts({ emergency: created, student, contacts }),
+  });
+
+  res.status(201).json({ success: true, data: emergency });
+};
+
+export const listRideEmergencies = async (req, res) => {
+  const emergencies = await emergencyService.listRideEmergencies({
+    studentRideId: req.params.studentRideId,
+    userId: req.auth.sub,
+  });
+
+  res.json({ success: true, data: { emergencies } });
+};
+
+export const resolveEmergency = async (req, res) => {
+  const emergency = await emergencyService.resolveEmergency({
+    emergencyId: req.params.emergencyId,
+    userId: req.auth.sub,
+    notes: req.body?.notes,
+    status: req.body?.status,
+  });
+
+  res.json({ success: true, data: emergency });
 };
