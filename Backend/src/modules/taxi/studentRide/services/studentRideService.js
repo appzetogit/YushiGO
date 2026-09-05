@@ -65,6 +65,25 @@ export const applyTransition = ({ ride, nextStatus }) => {
   return previous;
 };
 
+/**
+ * Which audit event a status change produces. Explicit rather than derived:
+ * several statuses have differently named events, and a lookup miss used to
+ * fall through to the wrong one.
+ */
+const EVENT_FOR_STATUS = Object.freeze({
+  DRIVER_ASSIGNED: STUDENT_RIDE_EVENTS.DRIVER_ASSIGNED,
+  DRIVER_ARRIVING: STUDENT_RIDE_EVENTS.DRIVER_ARRIVING,
+  DRIVER_ARRIVED: STUDENT_RIDE_EVENTS.DRIVER_ARRIVED,
+  PICKUP_OTP_VERIFIED: STUDENT_RIDE_EVENTS.PICKUP_OTP_VERIFIED,
+  RIDE_STARTED: STUDENT_RIDE_EVENTS.RIDE_STARTED,
+  NEAR_DESTINATION: STUDENT_RIDE_EVENTS.NEAR_DESTINATION,
+  DROP_OTP_VERIFIED: STUDENT_RIDE_EVENTS.DROP_OTP_VERIFIED,
+  COMPLETED: STUDENT_RIDE_EVENTS.RIDE_COMPLETED,
+  CANCELLED: STUDENT_RIDE_EVENTS.RIDE_CANCELLED,
+  NO_SHOW: STUDENT_RIDE_EVENTS.RIDE_CANCELLED,
+  FAILED: STUDENT_RIDE_EVENTS.RIDE_CANCELLED,
+});
+
 export const serializeStudentRide = (ride, { student = null, timeline = null } = {}) => ({
   studentRideId: String(ride._id),
   rideId: String(ride.rideId),
@@ -276,10 +295,15 @@ export const requireOwnedStudentRide = async ({ studentRideId, userId }, { sessi
  * `pickupOtp.hash` and `dropOtp.hash` are `select: false`, so they are absent
  * from every ordinary read and have to be asked for here explicitly.
  */
-const loadRideWithOtps = async (studentRideId, session) => StudentRide
-  .findById(studentRideId)
-  .select('+pickupOtp.hash +dropOtp.hash')
-  .session(session);
+const loadRideWithOtps = async (studentRideId, session) => {
+  const query = StudentRide.findById(studentRideId).select('+pickupOtp.hash +dropOtp.hash');
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
 
 /**
  * Verify a pickup or drop code.
@@ -301,78 +325,111 @@ export const verifyRideOtp = async ({
     ? STUDENT_RIDE_STATUS.PICKUP_OTP_VERIFIED
     : STUDENT_RIDE_STATUS.DROP_OTP_VERIFIED;
 
+  const ride = await loadRideWithOtps(studentRideId, null);
+
+  if (!ride) {
+    throw studentRideError(404, STUDENT_RIDE_ERROR_CODES.RIDE_NOT_FOUND, 'Ride not found.');
+  }
+
+  if (assertDriverForRide) {
+    await assertDriverForRide({ rideId: ride.rideId, driverId: actor.id });
+  }
+
+  // Checked before the status rule so a replay is named for what it is. After a
+  // successful verification the ride has already moved on, and a status error
+  // would tell the driver the wrong thing about why their entry was refused.
+  if (ride[field]?.verifiedAt) {
+    throw studentRideError(
+      409,
+      STUDENT_RIDE_ERROR_CODES.OTP_ALREADY_VERIFIED,
+      `This ${kind} OTP has already been used.`,
+    );
+  }
+
+  // Status is checked before the code, so a verification attempted at the wrong
+  // point in the journey never consumes an attempt.
+  const allowed = STUDENT_RIDE_TRANSITIONS[ride.status] || [];
+
+  if (!allowed.includes(nextStatus)) {
+    throw studentRideError(
+      409,
+      STUDENT_RIDE_ERROR_CODES.INVALID_RIDE_STATUS,
+      `A ${kind} OTP cannot be verified while the ride is ${ride.status}.`,
+    );
+  }
+
+  const outcome = verifyOtp({ stored: ride[field], submitted: otp, label: kind });
+
+  if (!outcome.verified) {
+    /**
+     * Deliberately written outside a transaction.
+     *
+     * A failed attempt has to survive the rejection that follows it. Incrementing
+     * inside a transaction that then throws rolls the counter back, which leaves
+     * the attempt cap permanently at full and the codes open to brute force —
+     * the exact hole this counter exists to close.
+     */
+    await StudentRide.updateOne(
+      { _id: ride._id },
+      { $inc: { [`${field}.attempts`]: 1 } },
+    );
+
+    await recordEvent({
+      studentRideId: ride._id,
+      eventType: isPickup
+        ? STUDENT_RIDE_EVENTS.PICKUP_OTP_FAILED
+        : STUDENT_RIDE_EVENTS.DROP_OTP_FAILED,
+      description: 'Incorrect OTP submitted.',
+      // Records that an attempt happened and how many have been used — never the
+      // value that was tried (§53).
+      metadata: { attempts: outcome.attempts },
+      createdBy: { role: 'driver', id: actor.id },
+      session: null,
+    });
+
+    throw studentRideError(400, STUDENT_RIDE_ERROR_CODES.INVALID_OTP, 'Incorrect OTP.');
+  }
+
   const session = await mongoose.startSession();
 
   try {
     let result;
 
     await session.withTransaction(async () => {
-      const ride = await loadRideWithOtps(studentRideId, session);
+      // Re-read inside the transaction: the checks above ran against an earlier
+      // snapshot, and withTransaction may replay this body.
+      const fresh = await loadRideWithOtps(studentRideId, session);
 
-      if (!ride) {
-        throw studentRideError(404, STUDENT_RIDE_ERROR_CODES.RIDE_NOT_FOUND, 'Ride not found.');
-      }
-
-      if (assertDriverForRide) {
-        await assertDriverForRide({ rideId: ride.rideId, driverId: actor.id, session });
-      }
-
-      // Status is checked before the code, so a verification attempted at the
-      // wrong point in the journey never consumes an attempt.
-      const allowed = STUDENT_RIDE_TRANSITIONS[ride.status] || [];
-
-      if (!allowed.includes(nextStatus)) {
+      if (!fresh || fresh[field]?.verifiedAt) {
         throw studentRideError(
           409,
-          STUDENT_RIDE_ERROR_CODES.INVALID_RIDE_STATUS,
-          `A ${kind} OTP cannot be verified while the ride is ${ride.status}.`,
+          STUDENT_RIDE_ERROR_CODES.OTP_ALREADY_VERIFIED,
+          `This ${kind} OTP has already been used.`,
         );
       }
 
-      const outcome = verifyOtp({ stored: ride[field], submitted: otp, label: kind });
-
-      if (!outcome.verified) {
-        ride[field].attempts = outcome.attempts;
-        await ride.save({ session });
-
-        await recordEvent({
-          studentRideId: ride._id,
-          eventType: isPickup
-            ? STUDENT_RIDE_EVENTS.PICKUP_OTP_FAILED
-            : STUDENT_RIDE_EVENTS.DROP_OTP_FAILED,
-          description: 'Incorrect OTP submitted.',
-          // Records that an attempt happened and how many remain — never the
-          // value that was tried (§53).
-          metadata: { attempts: outcome.attempts },
-          createdBy: { role: 'driver', id: actor.id },
-          session,
-        });
-
-        throw studentRideError(400, STUDENT_RIDE_ERROR_CODES.INVALID_OTP, 'Incorrect OTP.');
-      }
-
-      const previous = applyTransition({ ride, nextStatus });
-      ride[field].verifiedAt = outcome.verifiedAt;
+      const previous = applyTransition({ ride: fresh, nextStatus });
+      fresh[field].verifiedAt = outcome.verifiedAt;
 
       if (isPickup) {
-        ride.startedAt = ride.startedAt || outcome.verifiedAt;
+        fresh.startedAt = fresh.startedAt || outcome.verifiedAt;
       }
 
-      await ride.save({ session });
+      await fresh.save({ session });
 
       await recordEvent({
-        studentRideId: ride._id,
+        studentRideId: fresh._id,
         eventType: isPickup
           ? STUDENT_RIDE_EVENTS.PICKUP_OTP_VERIFIED
           : STUDENT_RIDE_EVENTS.DROP_OTP_VERIFIED,
         oldStatus: previous,
-        newStatus: ride.status,
+        newStatus: fresh.status,
         description: isPickup ? 'Student boarded.' : 'Student dropped off.',
         createdBy: { role: 'driver', id: actor.id },
         session,
       });
 
-      result = ride;
+      result = fresh;
     });
 
     return serializeStudentRide(result);
@@ -490,7 +547,7 @@ export const advanceStatus = async ({ studentRideId, nextStatus, actor, expectDr
 
       await recordEvent({
         studentRideId: ride._id,
-        eventType: STUDENT_RIDE_EVENTS[nextStatus] || STUDENT_RIDE_EVENTS.RIDE_STARTED,
+        eventType: EVENT_FOR_STATUS[nextStatus] || STUDENT_RIDE_EVENTS.RIDE_STARTED,
         oldStatus: previous,
         newStatus: ride.status,
         description: `Ride moved to ${nextStatus}.`,
