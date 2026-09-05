@@ -25,8 +25,11 @@ for (const name of [
 ]) {
   await mongoose.model(name).createCollection();
 }
+// Indexes carry behaviour here, not just speed: the rating uniqueness rule, the
+// booking idempotency rule, and the 2dsphere search relies on.
 await mongoose.model('TaxiCarpoolRating').syncIndexes();
 await mongoose.model('TaxiCarpoolBooking').syncIndexes();
+await mongoose.model('TaxiCarpoolRide').syncIndexes();
 
 let pass = 0;
 let fail = 0;
