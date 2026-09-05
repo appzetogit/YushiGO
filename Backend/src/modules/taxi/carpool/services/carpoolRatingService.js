@@ -42,7 +42,14 @@ export const getUserStats = async (userId) => {
 
 /** Batch variant, so a page of search results costs one query rather than N. */
 export const getStatsForUsers = async (userIds = []) => {
-  const ids = [...new Set(userIds.map((id) => String(id)).filter(Boolean))];
+  // Non-ids are dropped rather than passed through: a ride whose host account
+  // was deleted resolves to null, and casting that would fail the whole search
+  // instead of returning the other rides.
+  const ids = [...new Set(
+    userIds
+      .map((id) => String(id?._id || id || ''))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+  )];
 
   if (!ids.length) {
     return new Map();
