@@ -715,6 +715,123 @@ automatically primary; setting `isPrimary: true` on another demotes the previous
 Anything belonging to another user returns **404, not 403** — deliberately, so ids cannot be probed.
 Treat it as "not found" in the UI.
 
+
+### Booking a student ride
+
+A student is registered once; the booking references `student_id` and never repeats their details.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/student-ride/rides` | user | book — see below |
+| GET | `/student-ride/rides` | user | `?student_id=&status=` |
+| GET | `/student-ride/rides/upcoming` | user | sorted by `scheduledAt` |
+| GET | `/student-ride/rides/:studentRideId` | user | detail + full timeline |
+| POST | `/student-ride/rides/:studentRideId/cancel` | user | `{ reason }` |
+| POST | `/student-ride/rides/:studentRideId/otp/:kind/reissue` | user | `kind` = `pickup` or `drop` |
+| POST | `/student-ride/rides/:studentRideId/:kind/verify` | **driver** | `{ otp }` |
+| POST | `/student-ride/rides/:studentRideId/status` | **driver** | `{ status }` |
+
+**Book** — pass saved-location ids and the backend resolves them:
+
+```json
+{ "student_id": "...", "pickup_saved_location_id": "...",
+  "destination_saved_location_id": "...", "scheduled_at": "2026-09-06T08:00:00+05:30" }
+```
+
+You may send inline `pickup` / `destination` objects (`{ address, latitude, longitude }`) instead.
+
+**The response contains `pickupOtp` in plaintext. That is the only time you will ever see it.**
+Show it to the rider; it is not in ride detail, not in the timeline, and not recoverable. If they
+lose it, call the reissue endpoint — that mints a new code and invalidates the old one.
+
+Everywhere else you get OTP *state* only:
+
+```json
+"pickupOtp": { "issued": true, "verified": false, "expiresAt": "...", "attemptsRemaining": 5 }
+```
+
+**Addresses are snapshotted at booking.** Editing a saved HOME afterwards does not change where an
+existing ride says it collected the student — deliberately, so history stays true.
+
+### The lifecycle
+
+```
+BOOKED -> DRIVER_ASSIGNED -> DRIVER_ARRIVING -> DRIVER_ARRIVED
+       -> PICKUP_OTP_VERIFIED -> RIDE_STARTED -> NEAR_DESTINATION
+       -> DROP_OTP_VERIFIED -> COMPLETED
+```
+
+Terminal branches: `CANCELLED`, `NO_SHOW`, `FAILED`. **Transitions are enforced server-side** — a
+status jump that skips a step returns `409 INVALID_RIDE_STATUS`. Don't drive the UI from an assumed
+order; read `status`.
+
+The **drop OTP does not exist until `RIDE_STARTED`**. It is returned once, in the response to the
+status call that starts the ride.
+
+Cancellation is only allowed up to `DRIVER_ARRIVED`. Once the student is aboard the rider cannot
+cancel — the ride ends by drop-off, no-show, or an operator decision.
+
+### OTP failure modes
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `INVALID_OTP` | 400 | wrong code — an attempt was consumed |
+| `OTP_EXPIRED` | 410 | past `expiresAt` — reissue |
+| `OTP_ATTEMPTS_EXCEEDED` | 429 | locked out — reissue clears it |
+| `OTP_ALREADY_VERIFIED` | 409 | this code is spent |
+| `UNAUTHORIZED_DRIVER` | 403 | not the driver assigned to this ride |
+
+A verification attempted at the wrong point in the lifecycle returns `INVALID_RIDE_STATUS` and does
+**not** consume an attempt, so an early tap cannot burn the allowance.
+
+### Live tracking
+
+Socket.IO, same connection as the rest of the app:
+
+```dart
+socket.emit('student-ride:join', {'studentRideId': id});
+socket.on('student-ride:location:updated', (d) => moveCar(d['latitude'], d['longitude']));
+socket.on('student-ride:status:updated', (d) => setStatus(d['status']));
+socket.on('student-ride:completed', (_) => stopTracking());
+```
+
+On `student-ride:completed` the server also removes you from the room. Stop your timers.
+
+### Trip sharing
+
+| Method | Path | Auth |
+|---|---|---|
+| POST | `/student-ride/rides/:studentRideId/share` | user |
+| GET | `/student-ride/rides/:studentRideId/share` | user |
+| DELETE | `/student-ride/rides/:studentRideId/share/:shareId` | user |
+
+`POST` returns `{ shareUrl, token, expiresAt, guardiansNotified }`. Hand `shareUrl` to the native
+share sheet. Guardians on file as emergency contacts are texted it automatically as well.
+
+**The token is returned once and stored only as a hash** — the list endpoint shows each link's state
+(`active`, `accessCount`, `lastAccessedAt`) but can never show the link again. To stop sharing, call
+DELETE; it is dead on the next request.
+
+The link opens a browser page, no app required. That page uses
+`GET /public/student-ride/share/{token}` (unauthenticated) and may subscribe to live updates by
+connecting the socket with `auth: { shareToken }` instead of a JWT. It receives location and status
+only, and is disconnected when the ride ends.
+
+### SOS
+
+| Method | Path | Auth |
+|---|---|---|
+| POST | `/student-ride/rides/:studentRideId/sos` | user |
+| GET | `/student-ride/rides/:studentRideId/sos` | user |
+| PATCH | `/student-ride/sos/:emergencyId` | user |
+
+```json
+{ "latitude": 28.6139, "longitude": 77.2090, "type": "EMERGENCY" }
+```
+
+**Send it even without a GPS fix** — coordinates are optional and an alert with none is still
+accepted. Only valid between `DRIVER_ARRIVING` and `NEAR_DESTINATION`.
+
 ## 9. Parcel and medicine delivery
 
 Same ride engine underneath — `serviceType` is `parcel` / `medicine` and a `Delivery` doc is
@@ -799,7 +916,9 @@ the booking is active.
 All bus endpoints require a user token. Seats are held server-side between `order` and `verify` —
 don't let the user idle on the payment screen.
 
-**Pooling**
+**Pooling** — the operator-run scheduled shuttle: admin-defined routes, fixed stops and
+timetable, admin-set fare. **This is not the same product as Carpool in §10b**, where a user
+publishes their own journey. Different endpoints, different data, both live.
 
 | Method | Path |
 |---|---|
@@ -808,6 +927,124 @@ don't let the user idle on the payment screen.
 | POST | `/users/pooling/bookings/order` → `/users/pooling/bookings/verify` |
 | POST | `/users/pooling/bookings` (no-payment path) |
 | GET | `/users/pooling/bookings` |
+
+## 10b. Carpool (peer-to-peer)
+
+A separate module from the operator-run pooling in §10 — different product, different endpoints.
+Here **any user** publishes their own journey in their own car, and the same account can host one
+trip and ride as a passenger on another. There is no permanent driver or passenger role.
+
+All `user`-authenticated.
+
+**Your vehicles** — a host's own car, not the vehicle-type catalogue:
+
+| Method | Path |
+|---|---|
+| GET, POST | `/carpool/vehicles` |
+| PATCH, DELETE | `/carpool/vehicles/:vehicleId` |
+
+`{ "model": "Hyundai i20", "registrationNumber": "MP09AB1234", "seatCapacity": 4, "hasAc": true }`
+
+**Rides:**
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/carpool/rides` | publish |
+| GET | `/carpool/rides/search` | route-matched — see below |
+| GET | `/carpool/rides/:rideId` | detail; `isOwner` tells you which view you got |
+| GET | `/carpool/my-offered-rides` | `?status=` |
+| POST | `/carpool/rides/:rideId/cancel`, `/start`, `/complete` | host only |
+| GET | `/carpool/rides/:rideId/requests` | host only |
+
+**Publish** — `available_seats` cannot exceed the vehicle's `seatCapacity`:
+
+```json
+{ "vehicle_id": "...",
+  "origin": { "name": "Indore", "lat": 22.7196, "lng": 75.8577 },
+  "destination": { "name": "Ujjain", "lat": 23.1765, "lng": 75.7885 },
+  "pickup": { "name": "Vijay Nagar", "lat": 22.7533, "lng": 75.8937 },
+  "drop": { "name": "Ujjain Bus Stand", "lat": 23.1815, "lng": 75.7682 },
+  "stops": [ { "name": "Dewas", "lat": 22.9676, "lng": 76.0534, "order": 1 } ],
+  "date": "2026-09-06", "departure_time": "10:30",
+  "available_seats": 3, "price_per_seat": 180,
+  "preferences": { "ac": true, "smoking_allowed": false, "luggage_allowed": true },
+  "notes": "Small luggage is okay." }
+```
+
+**Search** takes coordinates, not place names:
+
+```
+GET /carpool/rides/search?from_lat=&from_lng=&to_lat=&to_lng=&date=&passengers=1
+```
+
+Matching is **corridor-based**, not endpoint equality: a pickup partway along a leg matches even when
+it is near no named stop. Each result carries a `match` block you can surface as the reason it was
+returned:
+
+```json
+"match": { "pickupDetourKm": 0.8, "dropDetourKm": 0.2, "sharedDistanceKm": 31.4 }
+```
+
+Results are ranked by total detour, then departure time. Your own rides never appear.
+
+**Bookings:**
+
+| Method | Path | Who |
+|---|---|---|
+| POST | `/carpool/rides/:rideId/bookings` | passenger |
+| GET | `/carpool/my-bookings` | passenger |
+| GET | `/carpool/bookings/:bookingId` | either party |
+| POST | `/carpool/bookings/:bookingId/accept`, `/reject` | host |
+| POST | `/carpool/bookings/:bookingId/cancel` | passenger |
+
+`{ "seat_count": 1, "pickup": { "name": "", "lat": 0, "lng": 0 }, "drop": { "name": "", "lat": 0, "lng": 0 } }`
+
+**Seats are held from acceptance, not from the request.** Several passengers can hold a `PENDING`
+request against the same seat and the host chooses. Show requests as "requested", not "reserved".
+
+Booking status runs `PENDING -> ACCEPTED -> COMPLETED`, with `REJECTED` and `CANCELLED` as terminal
+branches. It is **separate from ride status** (`PUBLISHED`, `FULL`, `STARTED`, `COMPLETED`,
+`CANCELLED`, `EXPIRED`) — don't conflate them.
+
+**One active booking per ride per passenger.** A repeat call while one is open returns
+`409 DUPLICATE_BOOKING`, which is also what a double tap produces — treat it as success, not an
+error to show. After a rejection or cancellation they may request again.
+
+`409 SEATS_UNAVAILABLE` on accept means another passenger took the last seat between the request and
+the acceptance. That is a normal race, not a bug.
+
+**Trips, ratings, tracking:**
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/carpool/home` | counts, `pending_requests_count`, reputation |
+| GET | `/carpool/my-trips` | `?type=all,passenger,offered` and `?status=upcoming,completed,cancelled` |
+| POST | `/carpool/ratings` | `{ booking_id, rating, review }` |
+| GET | `/carpool/ratings/pending` | trips awaiting a rating from you |
+| GET | `/carpool/me/stats` | your own reputation |
+| GET | `/carpool/users/:userId/ratings` | `?role=host` or `?role=passenger` |
+
+Ratings only open once a booking is `COMPLETED`, one per person per trip, and **the person being
+rated is derived from the booking** — a `rated_user_id` in the body is ignored.
+
+Reputation is reported **per direction**: `asHost` and `asPassenger` are separate scores and trip
+counts. Someone can be a well-rated passenger and have never hosted.
+
+Live tracking during a started ride:
+
+```dart
+socket.emit('carpool:join', {'rideId': id});
+socket.on('carpool:location:updated', (d) => moveCar(d));
+socket.on('carpool:status:updated', (d) => setStatus(d['status']));
+// host only:
+socket.emit('carpool:location:update', {'rideId': id, 'latitude': lat, 'longitude': lng});
+```
+
+Only the host may push position, only while the ride is `STARTED`, and only passengers holding a
+confirmed seat may watch.
+
+**Payment is not implemented.** Every booking is `payment_status: NOT_REQUIRED` — passengers settle
+cash with the host. Do not build a payment step against these endpoints yet.
 
 ## 11. Support and chat (both apps)
 
@@ -1154,8 +1391,29 @@ Skip these in Flutter unless you're building an admin app. If you do, the list i
 4. Payments + wallet.
 5. Driver auth + onboarding + online/offline + `rideRequest` handling.
 6. Delivery / medicine (reuses §5 wholesale).
-7. Rentals, buses, pooling — independent, ship them last.
-8. Support, chat, notifications, SOS.
+7. Student Ride (§8b) — students and saved locations first, then booking and OTP, then sharing and
+   SOS. The OTP and share-link rules are enforced server-side, so build the UI to match them rather
+   than assuming your own ordering.
+8. Carpool (§10b) — vehicles, then publish, then search, then bookings. Self-contained; nothing else
+   depends on it.
+9. Rentals, buses, pooling — independent, ship them last.
+10. Support, chat, notifications, SOS.
+
+## 23b. Student Ride and Carpool gotchas
+
+- **The student-ride pickup OTP is shown once.** It is in the booking response and nowhere else —
+  not in ride detail, not in the timeline, not recoverable. Persist it in the app or call reissue.
+- **The drop OTP does not exist until the ride starts.** Don't render a field for it before then.
+- **Carpool seats are not held by a request.** Two passengers can request the same seat; only
+  acceptance reserves it. `409 SEATS_UNAVAILABLE` on accept is a normal race.
+- **`409 DUPLICATE_BOOKING` is usually your own double tap.** Treat it as success.
+- **Carpool ride status and booking status are different fields with different values.** Conflating
+  them is the easiest bug to write here.
+- **Student-ride transitions are enforced.** Read `status` from the server rather than advancing a
+  local state machine; a skipped step returns `409 INVALID_RIDE_STATUS`.
+- **A share link dies when the ride completes**, even though its `expiresAt` is still in the future.
+  Expect the public page to stop returning data on arrival.
+- **Carpool has no payment.** `NOT_REQUIRED` everywhere until the model is confirmed.
 
 ## 24. Gotchas that will bite you
 
