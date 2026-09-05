@@ -61,6 +61,13 @@ const host = new mongoose.Types.ObjectId();
 const alice = new mongoose.Types.ObjectId();
 const stranger = new mongoose.Types.ObjectId();
 
+// Minimal user documents so `populate` resolves in search results. Inserted
+// raw to avoid dragging the whole registration flow into a carpool test.
+await mongoose.connection.collection('taxiusers').insertMany([
+  { _id: host, name: 'Varun', phoneVerified: true },
+  { _id: alice, name: 'Aarohi', phoneVerified: true },
+]);
+
 const INDORE = { name: 'Indore', lat: 22.7196, lng: 75.8577 };
 const UJJAIN = { name: 'Ujjain', lat: 23.1765, lng: 75.7885 };
 const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
