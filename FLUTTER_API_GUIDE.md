@@ -967,9 +967,29 @@ All `user`-authenticated.
   "stops": [ { "name": "Dewas", "lat": 22.9676, "lng": 76.0534, "order": 1 } ],
   "date": "2026-09-06", "departure_time": "10:30",
   "available_seats": 3, "price_per_seat": 180,
-  "preferences": { "ac": true, "smoking_allowed": false, "luggage_allowed": true },
+  "preferences": { "women_only": false, "ac": true,
+                   "smoking_allowed": false, "luggage_allowed": true },
   "notes": "Small luggage is okay." }
 ```
+
+**Women-only rides.** A host sets `preferences.women_only: true`; every occupant is then a woman,
+the host included. This is **not a display flag you filter on** — the server refuses to break it at
+three separate points, so the app cannot leak one of these rides to the wrong person:
+
+| Point | Behaviour |
+|---|---|
+| Publishing | Only a woman can create one; anyone else gets `403 WOMEN_ONLY_RESTRICTED` |
+| Search | These rides are **omitted entirely** for anyone who cannot book them — you will not see them to filter |
+| Booking | Re-checked on the request, because a `rideId` can arrive from a shared link or a stale list |
+
+Search results and ride detail carry a top-level `womenOnly` boolean so you can badge them. Only
+women receive them, so the badge is reassurance rather than a filter.
+
+**Only an explicit `gender: "female"` on the profile qualifies.** An unset gender is refused, and so
+is `prefer-not-to-say` — the point of the setting is that nobody in the car is there on an
+assumption. The practical consequence is that a woman who has not completed her profile is turned
+away from her own category, so **prompt for gender in the profile before she reaches these screens**,
+and route the `403` to the profile rather than showing a bare error. The message names the cause.
 
 **Search** takes coordinates, not place names:
 
@@ -1012,6 +1032,9 @@ error to show. After a rejection or cancellation they may request again.
 
 `409 SEATS_UNAVAILABLE` on accept means another passenger took the last seat between the request and
 the acceptance. That is a normal race, not a bug.
+
+`403 WOMEN_ONLY_RESTRICTED` means either the ride is women-only and the caller is not eligible, or
+they tried to publish one without an eligible profile. Check `gender` before blaming the ride.
 
 **Trips, ratings, tracking:**
 
@@ -1413,6 +1436,11 @@ Skip these in Flutter unless you're building an admin app. If you do, the list i
   local state machine; a skipped step returns `409 INVALID_RIDE_STATUS`.
 - **A share link dies when the ride completes**, even though its `expiresAt` is still in the future.
   Expect the public page to stop returning data on arrival.
+- **Women-only carpool rides are invisible, not filtered.** They never appear in search for
+  someone who cannot book them, so an empty result set is a legitimate outcome, and there is nothing
+  client-side to filter.
+- **A woman with no `gender` on her profile cannot use women-only rides** — not publish, not book.
+  Prompt for it in the profile long before she reaches the carpool tab.
 - **Carpool has no payment.** `NOT_REQUIRED` everywhere until the model is confirmed.
 
 ## 24. Gotchas that will bite you
