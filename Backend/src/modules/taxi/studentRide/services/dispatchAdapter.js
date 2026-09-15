@@ -19,17 +19,20 @@ import { studentRideError } from './studentService.js';
  * created inside the caller's transaction so a failure further down cannot
  * leave a dispatch ride with no student ride attached to it.
  */
-export const createDispatchRide = async ({ userId, pickup, destination, scheduledAt, payload, session }) => {
+export const createDispatchRide = async ({ userId, pickup, destination, scheduledAt, payload, quote, session }) => {
   const [ride] = await Ride.create([{
     userId,
     pickupLocation: { type: 'Point', coordinates: [pickup.longitude, pickup.latitude] },
     dropLocation: { type: 'Point', coordinates: [destination.longitude, destination.latitude] },
     pickupAddress: pickup.address,
     dropAddress: destination.address,
-    fare: Number(payload?.fare || 0),
-    estimatedDistanceMeters: Number(payload?.estimated_distance_meters || payload?.estimatedDistanceMeters || 0),
+    // Both come from the server-side quote. A fare taken from the request body
+    // would let the caller name their own price, and a null vehicle type leaves
+    // dispatch with nothing to match a driver against.
+    fare: quote.fare,
+    estimatedDistanceMeters: quote.distanceMeters,
     estimatedDurationMinutes: Number(payload?.estimated_duration_minutes || payload?.estimatedDurationMinutes || 0),
-    vehicleTypeId: payload?.vehicle_type_id || payload?.vehicleTypeId || null,
+    vehicleTypeId: quote.vehicleTypeId,
     paymentMethod: payload?.payment_method || payload?.paymentMethod || 'cash',
     serviceType: 'student',
     // transport_type keys the SetPrice lookup and driver matching, and a student

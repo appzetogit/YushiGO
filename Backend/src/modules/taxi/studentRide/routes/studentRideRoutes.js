@@ -44,6 +44,7 @@ studentRideRouter.patch('/student-ride/locations/:locationId', asUser, asyncHand
 studentRideRouter.delete('/student-ride/locations/:locationId', asUser, asyncHandler(studentController.deleteSavedLocation));
 
 // Rides — booked and managed by the parent account.
+studentRideRouter.post('/student-ride/rides/quote', asUser, asyncHandler(studentController.quoteStudentRide));
 studentRideRouter.post('/student-ride/rides', asUser, asyncHandler(studentController.createStudentRide));
 studentRideRouter.get('/student-ride/rides', asUser, asyncHandler(studentController.listStudentRides));
 studentRideRouter.get('/student-ride/rides/upcoming', asUser, asyncHandler(studentController.listUpcomingStudentRides));

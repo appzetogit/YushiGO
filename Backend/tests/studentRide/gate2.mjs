@@ -16,6 +16,7 @@ const studentService = await import('../../src/modules/taxi/studentRide/services
 const locationService = await import('../../src/modules/taxi/studentRide/services/savedLocationService.js');
 const rideService = await import('../../src/modules/taxi/studentRide/services/studentRideService.js');
 const dispatch = await import('../../src/modules/taxi/studentRide/services/dispatchAdapter.js');
+const fareService = await import('../../src/modules/taxi/studentRide/services/fareService.js');
 const { StudentRide } = await import('../../src/modules/taxi/studentRide/models/StudentRide.js');
 const { StudentRideEvent } = await import('../../src/modules/taxi/studentRide/models/StudentRideEvent.js');
 const { Ride } = await import('../../src/modules/taxi/user/models/Ride.js');
@@ -79,12 +80,33 @@ const school = await locationService.createSavedLocation({
   payload: { label: 'SCHOOL', address: "St. Teresa's, Greater Noida", latitude: 28.47, longitude: 77.52 },
 });
 
+// Pricing the booking needs: a vehicle type and a matching SetPrice row, the
+// same pair an admin configures in production.
+const vehicleTypeId = new mongoose.Types.ObjectId();
+
+await mongoose.connection.collection('taxivehicles').insertOne({
+  _id: vehicleTypeId, name: 'YushiGo Fast', capacity: 5, service_tax: 0,
+});
+await mongoose.connection.collection('taxisetprices').insertOne({
+  vehicle_type: vehicleTypeId,
+  transport_type: 'taxi',
+  active: 1,
+  status: 'active',
+  zone_id: null,
+  service_location_id: null,
+  base_price: 30,
+  base_distance: 2,
+  price_per_distance: 12,
+  service_tax: 5,
+});
+
 const bookRide = async (userId = parent) => rideService.createStudentRide({
   userId,
   payload: {
     student_id: student.id,
     pickup_saved_location_id: home.id,
     destination_saved_location_id: school.id,
+    vehicle_type_id: vehicleTypeId,
   },
   createDispatchRide: dispatch.createDispatchRide,
 });
@@ -156,6 +178,92 @@ await expectReject('a location belonging to another student is refused', 'LOCATI
       student_id: sibling.id,
       pickup_saved_location_id: home.id,
       destination_saved_location_id: school.id,
+      vehicle_type_id: vehicleTypeId,
+    },
+    createDispatchRide: dispatch.createDispatchRide,
+  });
+});
+
+await check('the fare is computed on the server, not taken from the client', async () => {
+  // 10km at base 30 (first 2km included) + 12/km over: 30 + 8*12 = 126, +5% tax.
+  const priced = await rideService.createStudentRide({
+    userId: parent,
+    payload: {
+      student_id: student.id,
+      pickup_saved_location_id: home.id,
+      destination_saved_location_id: school.id,
+      vehicle_type_id: vehicleTypeId,
+      estimated_distance_meters: 10000,
+      // Ignored: the caller does not get to name the price.
+      fare: 1,
+    },
+    createDispatchRide: dispatch.createDispatchRide,
+  });
+
+  if (priced.fare !== 132.3) throw new Error(`expected 132.3, got ${priced.fare}`);
+
+  const dispatchRide = await Ride.findById(priced.rideId);
+  if (dispatchRide.fare !== 132.3) throw new Error(`dispatch fare ${dispatchRide.fare}`);
+  if (dispatchRide.estimatedDistanceMeters !== 10000) throw new Error('distance not carried through');
+  if (!dispatchRide.vehicleTypeId) throw new Error('vehicle type not set — dispatch cannot match');
+});
+
+await check('a quote matches what booking charges', async () => {
+  const { pickup, destination } = await rideService.resolveRideEndpointsForQuote({
+    userId: parent,
+    payload: {
+      student_id: student.id,
+      pickup_saved_location_id: home.id,
+      destination_saved_location_id: school.id,
+    },
+  });
+
+  const quote = await fareService.quoteStudentRideFare({
+    vehicleTypeId, pickup, destination, distanceMeters: 10000,
+  });
+
+  if (quote.fare !== 132.3) throw new Error(`quote ${quote.fare}`);
+  if (quote.distanceSource !== 'client') throw new Error(`source ${quote.distanceSource}`);
+});
+
+await check('with no distance supplied it falls back to straight-line', async () => {
+  const { pickup, destination } = await rideService.resolveRideEndpointsForQuote({
+    userId: parent,
+    payload: {
+      student_id: student.id,
+      pickup_saved_location_id: home.id,
+      destination_saved_location_id: school.id,
+    },
+  });
+
+  const quote = await fareService.quoteStudentRideFare({ vehicleTypeId, pickup, destination });
+
+  if (quote.distanceSource !== 'straight-line') throw new Error(`source ${quote.distanceSource}`);
+  if (!(quote.fare > 0)) throw new Error('fallback produced no fare');
+});
+
+await expectReject('booking without a vehicle type is refused', 'RIDE_NOT_FOUND', () =>
+  rideService.createStudentRide({
+    userId: parent,
+    payload: {
+      student_id: student.id,
+      pickup_saved_location_id: home.id,
+      destination_saved_location_id: school.id,
+    },
+    createDispatchRide: dispatch.createDispatchRide,
+  }));
+
+await expectReject('a vehicle type with no pricing is refused', 'RIDE_NOT_FOUND', async () => {
+  const unpriced = new mongoose.Types.ObjectId();
+  await mongoose.connection.collection('taxivehicles').insertOne({ _id: unpriced, name: 'Unpriced' });
+
+  return rideService.createStudentRide({
+    userId: parent,
+    payload: {
+      student_id: student.id,
+      pickup_saved_location_id: home.id,
+      destination_saved_location_id: school.id,
+      vehicle_type_id: unpriced,
     },
     createDispatchRide: dispatch.createDispatchRide,
   });

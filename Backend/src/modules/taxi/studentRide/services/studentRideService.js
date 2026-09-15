@@ -13,6 +13,7 @@ import { requireOwnedStudent, studentRideError } from './studentService.js';
 import { requireOwnedSavedLocation } from './savedLocationService.js';
 import { issueOtp, serializeOtpState, verifyOtp } from './otpService.js';
 import { listEmergencyContacts } from './guardianService.js';
+import { quoteStudentRideFare } from './fareService.js';
 
 /**
  * Append an event in the caller's transaction (§75).
@@ -209,6 +210,24 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
         session,
       });
 
+      /**
+       * Priced here, on the server, from the admin's SetPrice rules.
+       *
+       * This used to be `payload.fare` with a fallback of zero, so a client that
+       * sent no fare booked a free ride and the dispatcher had nothing to offer
+       * a driver. The quote is computed before the ride is written so a missing
+       * or unpriced vehicle type fails the booking outright rather than
+       * producing a ride nobody can be paid for.
+       */
+      const quote = await quoteStudentRideFare({
+        vehicleTypeId: payload?.vehicle_type_id ?? payload?.vehicleTypeId,
+        pickup,
+        destination,
+        serviceLocationId: payload?.service_location_id || null,
+        zoneId: payload?.zone_id || null,
+        distanceMeters: payload?.estimated_distance_meters ?? payload?.estimatedDistanceMeters,
+      });
+
       // The dispatch ride is created first: without it there is nothing for a
       // driver to be matched to, and a student ride with no ride would be an
       // orphan the dispatcher never sees.
@@ -218,6 +237,7 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
         destination,
         scheduledAt,
         payload,
+        quote,
         session,
       });
 
@@ -255,6 +275,7 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
       created = {
         ride: studentRide,
         student,
+        quote,
         // Returned once, here, and never persisted or logged in the clear.
         pickupOtp: pickupCode.otp,
       };
@@ -262,6 +283,9 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
 
     return {
       ...serializeStudentRide(created.ride, { student: created.student }),
+      fare: created.quote.fare,
+      fareBreakdown: created.quote.breakdown,
+      distanceMeters: created.quote.distanceMeters,
       pickupOtp: created.pickupOtp,
     };
   } finally {
@@ -685,4 +709,38 @@ export const getRideEmergencyContacts = async (studentRideId) => {
   const ride = await StudentRide.findById(studentRideId).select('studentId');
 
   return ride ? listEmergencyContacts(ride.studentId) : [];
+};
+
+/**
+ * Resolve pickup and destination for a quote, without booking anything.
+ *
+ * Shares resolveEndpoint with the booking path, so a quote is priced against the
+ * same addresses the ride would use — including the ownership checks, so a
+ * caller cannot price against another student's saved locations.
+ */
+export const resolveRideEndpointsForQuote = async ({ userId, payload }) => {
+  const student = await requireOwnedStudent({
+    studentId: payload?.student_id ?? payload?.studentId,
+    userId,
+  });
+
+  const pickup = await resolveEndpoint({
+    savedLocationId: payload?.pickup_saved_location_id ?? payload?.pickupSavedLocationId,
+    inline: payload?.pickup,
+    studentId: student._id,
+    userId,
+    field: 'pickup',
+    session: null,
+  });
+
+  const destination = await resolveEndpoint({
+    savedLocationId: payload?.destination_saved_location_id ?? payload?.destinationSavedLocationId,
+    inline: payload?.destination ?? payload?.drop,
+    studentId: student._id,
+    userId,
+    field: 'destination',
+    session: null,
+  });
+
+  return { student, pickup, destination };
 };

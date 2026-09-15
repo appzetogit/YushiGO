@@ -4,6 +4,7 @@ import * as savedLocationService from '../services/savedLocationService.js';
 import * as rideService from '../services/studentRideService.js';
 import * as dispatch from '../services/dispatchAdapter.js';
 import * as shareService from '../services/shareService.js';
+import * as fareService from '../services/fareService.js';
 import * as emergencyService from '../services/emergencyService.js';
 import * as notifications from '../services/studentRideNotifications.js';
 
@@ -145,6 +146,28 @@ export const deleteSavedLocation = async (req, res) => {
   });
 
   res.json({ success: true, data: result });
+};
+
+/**
+ * Price a journey without booking it, so the app can show a fare first. Uses the
+ * same function the booking uses, so the quote and the charge cannot drift.
+ */
+export const quoteStudentRide = async (req, res) => {
+  const { pickup, destination } = await rideService.resolveRideEndpointsForQuote({
+    userId: req.auth.sub,
+    payload: req.body,
+  });
+
+  const quote = await fareService.quoteStudentRideFare({
+    vehicleTypeId: req.body?.vehicle_type_id ?? req.body?.vehicleTypeId,
+    pickup,
+    destination,
+    serviceLocationId: req.body?.service_location_id || null,
+    zoneId: req.body?.zone_id || null,
+    distanceMeters: req.body?.estimated_distance_meters ?? req.body?.estimatedDistanceMeters,
+  });
+
+  res.json({ success: true, data: quote });
 };
 
 export const createStudentRide = async (req, res) => {

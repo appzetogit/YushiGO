@@ -102,12 +102,33 @@ const school = await locationService.createSavedLocation({
   payload: { label: 'SCHOOL', address: "St. Teresa's, Greater Noida", latitude: 28.47, longitude: 77.52 },
 });
 
+// Pricing the booking needs: a vehicle type and a matching SetPrice row, the
+// same pair an admin configures in production.
+const vehicleTypeId = new mongoose.Types.ObjectId();
+
+await mongoose.connection.collection('taxivehicles').insertOne({
+  _id: vehicleTypeId, name: 'YushiGo Fast', capacity: 5, service_tax: 0,
+});
+await mongoose.connection.collection('taxisetprices').insertOne({
+  vehicle_type: vehicleTypeId,
+  transport_type: 'taxi',
+  active: 1,
+  status: 'active',
+  zone_id: null,
+  service_location_id: null,
+  base_price: 30,
+  base_distance: 2,
+  price_per_distance: 12,
+  service_tax: 5,
+});
+
 const bookRide = async () => rideService.createStudentRide({
   userId: parent,
   payload: {
     student_id: student.id,
     pickup_saved_location_id: home.id,
     destination_saved_location_id: school.id,
+    vehicle_type_id: vehicleTypeId,
   },
   createDispatchRide: dispatch.createDispatchRide,
 });
