@@ -2012,6 +2012,15 @@ export const updateCurrentUser = async (req, res) => {
     user.profileImage = toCleanString(req.body.profileImage);
   }
 
+  /**
+   * Gender was readable through this endpoint but never writable, so an app
+   * sending it got a 200 and no change. It also gates women-only carpool rides,
+   * where an unset value means a woman is refused her own category.
+   */
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'gender')) {
+    user.gender = normalizeGender(req.body.gender);
+  }
+
   await user.save();
 
   res.json({
