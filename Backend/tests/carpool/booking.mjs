@@ -25,8 +25,10 @@ await mongoose.connect(process.env.MONGODB_URI, { autoIndex: false });
 for (const name of ['TaxiCarpoolVehicle', 'TaxiCarpoolRide', 'TaxiCarpoolBooking']) {
   await mongoose.model(name).createCollection();
 }
-// The partial unique index carries the idempotency guarantee, so build it.
+// The partial unique index carries the idempotency guarantee, and search needs
+// the 2dsphere — both are behaviour here, not just speed.
 await mongoose.model('TaxiCarpoolBooking').syncIndexes();
+await mongoose.model('TaxiCarpoolRide').syncIndexes();
 
 let pass = 0;
 let fail = 0;
