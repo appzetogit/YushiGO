@@ -645,7 +645,7 @@ Validate before booking, then pass `promo_code` in the `POST /rides` body — th
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/users/me` | profile |
-| PATCH | `/users/me` | partial update |
+| PATCH | `/users/me` | partial update — `name`, `email`, `profileImage`, `gender` |
 | PUT | `/users/me/guardian-contacts` | guardian list (student-safety feature) |
 | POST | `/users/profile-image` | base64 image |
 | POST | `/users/me/delete-request` | account deletion request (admin approves) |
@@ -654,6 +654,25 @@ Validate before booking, then pass `promo_code` in the `POST /rides` body — th
 | DELETE | `/users/notifications/:id` | one |
 | DELETE | `/users/notifications` | clear all |
 | POST | `/users/sos` | SOS alert → admin dashboard |
+
+`PATCH /users/me` updates only the keys you send. The editable set is `name`, `email`,
+`profileImage` and `gender`:
+
+```json
+{ "gender": "female" }
+```
+
+`gender` is one of `male`, `female`, `other`, `prefer-not-to-say`. **Anything else is accepted and
+stored as `prefer-not-to-say`** rather than rejected — the same fallback registration applies — so
+send a value from a fixed picker and don't rely on a validation error to catch a typo.
+
+**This matters beyond the profile screen.** Gender decides who can publish and book women-only
+carpool rides (§10b), and only an explicit `female` qualifies there — unset and `prefer-not-to-say`
+are both refused. Prompt for it during onboarding, or a user will hit a `403` in carpool with no
+idea why.
+
+Until recently this endpoint accepted `gender`, returned `200`, and saved nothing. If you tested
+against an older build and concluded the field was read-only, retest.
 
 Notifications serialize as `{ id, title, body, image, sentAt, serviceLocationId }`.
 
@@ -990,6 +1009,7 @@ is `prefer-not-to-say` — the point of the setting is that nobody in the car is
 assumption. The practical consequence is that a woman who has not completed her profile is turned
 away from her own category, so **prompt for gender in the profile before she reaches these screens**,
 and route the `403` to the profile rather than showing a bare error. The message names the cause.
+Gender is set through `PATCH /users/me` — see §8.
 
 **Search** takes coordinates, not place names:
 
