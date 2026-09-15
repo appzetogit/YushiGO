@@ -8,7 +8,7 @@ import {
   carpoolConfig,
 } from '../constants/index.js';
 import { carpoolError } from './carpoolVehicleService.js';
-import { requireOwnedRide } from './carpoolRideService.js';
+import { assertWomenOnlyEligible, requireOwnedRide } from './carpoolRideService.js';
 import * as settlement from './carpoolSettlement.js';
 import { notifyCarpool } from './carpoolNotifications.js';
 import { runInTransaction } from './transaction.js';
@@ -187,6 +187,12 @@ export const createBooking = async ({ rideId, userId, payload }) => {
 
     if (ride.departureAt.getTime() <= Date.now()) {
       throw carpoolError(409, CARPOOL_ERRORS.RIDE_NOT_AVAILABLE, 'This ride has already departed.');
+    }
+
+    // Search hides these rides from anyone who cannot book them, but a rideId can
+    // also arrive from a shared link or an older cached list.
+    if (ride.preferences?.womenOnly) {
+      await assertWomenOnlyEligible({ userId, action: 'book', session });
     }
 
     // A request holds nothing, so this is an early courtesy check; the binding

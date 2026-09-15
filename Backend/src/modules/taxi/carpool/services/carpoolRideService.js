@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { CarpoolRide } from '../models/CarpoolRide.js';
+import { User } from '../../user/models/User.js';
 import {
   CARPOOL_ERRORS,
   CARPOOL_SEARCHABLE_STATUSES,
@@ -18,6 +19,37 @@ import {
   rankMatches,
 } from './routeMatching.js';
 import { getStatsForUsers } from './carpoolRatingService.js';
+
+/**
+ * Whether an account may take part in a women-only ride.
+ *
+ * Deliberately strict: only an explicit 'female' qualifies. An unset gender, or
+ * 'prefer-not-to-say', does not — the whole value of the setting is that nobody
+ * in the car is there on an assumption. That does exclude riders who have not
+ * completed their profile, which is a product trade-off rather than an
+ * oversight, and the error says what to do about it.
+ */
+export const assertWomenOnlyEligible = async ({ userId, action, session = null }) => {
+  const query = User.findById(userId).select('gender');
+
+  if (session) {
+    query.session(session);
+  }
+
+  const user = await query;
+
+  if (String(user?.gender || '').toLowerCase() !== 'female') {
+    throw carpoolError(
+      403,
+      CARPOOL_ERRORS.WOMEN_ONLY_RESTRICTED,
+      action === 'publish'
+        ? 'Only a woman can publish a women-only ride. Check the gender on your profile.'
+        : 'This ride is for women only.',
+    );
+  }
+
+  return user;
+};
 
 const parsePlace = (value, field) => {
   const name = String(value?.name || '').trim();
@@ -126,6 +158,7 @@ export const serializeRideForOwner = (ride, { vehicle } = {}) => ({
   availableSeats: Math.max(0, ride.offeredSeats - ride.bookedSeats),
   pricePerSeat: ride.pricePerSeat,
   preferences: ride.preferences,
+  womenOnly: Boolean(ride.preferences?.womenOnly),
   notes: ride.notes || '',
   vehicle: vehicle ? serializeVehicle(vehicle) : undefined,
   startedAt: ride.startedAt,
@@ -156,6 +189,7 @@ export const serializeRidePublic = (ride, { match = null, hostStats = null } = {
   availableSeats: Math.max(0, ride.offeredSeats - ride.bookedSeats),
   pricePerSeat: ride.pricePerSeat,
   preferences: ride.preferences,
+  womenOnly: Boolean(ride.preferences?.womenOnly),
   notes: ride.notes || '',
   // Present on search results so the app can show why a ride matched (§46).
   ...(match ? { match } : {}),
@@ -208,6 +242,13 @@ export const createRide = async ({ userId, payload }) => {
 
   const routeCoordinates = buildRouteCoordinates({ origin, stops, destination });
   const preferences = payload?.preferences || {};
+  const womenOnly = Boolean(preferences.women_only ?? preferences.womenOnly);
+
+  // Checked before the ride is written: a women-only ride hosted by a man is a
+  // promise broken at the driver's seat.
+  if (womenOnly) {
+    await assertWomenOnlyEligible({ userId, action: 'publish' });
+  }
 
   const ride = await CarpoolRide.create({
     driverId: userId,
@@ -225,6 +266,7 @@ export const createRide = async ({ userId, payload }) => {
     offeredSeats,
     pricePerSeat,
     preferences: {
+      womenOnly,
       ac: Boolean(preferences.ac),
       smokingAllowed: Boolean(preferences.smoking_allowed ?? preferences.smokingAllowed),
       petsAllowed: Boolean(preferences.pets_allowed ?? preferences.petsAllowed),
@@ -317,6 +359,17 @@ export const searchRides = async ({ userId, query }) => {
 
   if (query?.date) {
     filter.date = String(query.date).trim();
+  }
+
+  /**
+   * Women-only rides are hidden from everyone who cannot book them, rather than
+   * listed and then refused. Showing a ride a passenger will be turned away from
+   * is both a worse experience and a small disclosure about who is travelling.
+   */
+  const viewer = await User.findById(userId).select('gender');
+
+  if (String(viewer?.gender || '').toLowerCase() !== 'female') {
+    filter['preferences.womenOnly'] = { $ne: true };
   }
 
   const candidates = await CarpoolRide.find(filter)

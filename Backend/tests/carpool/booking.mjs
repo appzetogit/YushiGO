@@ -59,6 +59,21 @@ const alice = new mongoose.Types.ObjectId();
 const bob = new mongoose.Types.ObjectId();
 const carol = new mongoose.Types.ObjectId();
 
+// Women-only eligibility is read from the account, so these need to be real.
+const priya = new mongoose.Types.ObjectId();
+const meera = new mongoose.Types.ObjectId();
+const unsetGender = new mongoose.Types.ObjectId();
+
+await mongoose.connection.collection('taxiusers').insertMany([
+  { _id: host, name: 'Varun', gender: 'male' },
+  { _id: alice, name: 'Alice', gender: 'female' },
+  { _id: bob, name: 'Bob', gender: 'male' },
+  { _id: carol, name: 'Carol', gender: 'female' },
+  { _id: priya, name: 'Priya', gender: 'female' },
+  { _id: meera, name: 'Meera', gender: 'female' },
+  { _id: unsetGender, name: 'Unset', gender: '' },
+]);
+
 const INDORE = { name: 'Indore', lat: 22.7196, lng: 75.8577 };
 const DEWAS = { name: 'Dewas', lat: 22.9676, lng: 76.0534 };
 const UJJAIN = { name: 'Ujjain', lat: 23.1765, lng: 75.7885 };
@@ -335,6 +350,85 @@ await expectReject('a cancelled ride cannot be booked', 'RIDE_NOT_AVAILABLE', as
   const r = await publishRide(2);
   await bookingService.cancelRide({ rideId: r.rideId, userId: host });
   return bookingService.createBooking({ rideId: r.rideId, userId: alice, payload: bookingPayload(1) });
+});
+
+console.log('\nWOMEN-ONLY RIDES');
+
+const priyaVehicle = await vehicleService.createVehicle({
+  userId: priya,
+  payload: { model: 'Tata Nexon', registrationNumber: 'MP09WO0001', seatCapacity: 4 },
+});
+
+const publishWomenOnly = async (userId = priya, vehicleId = priyaVehicle.id) =>
+  rideService.createRide({
+    userId,
+    payload: {
+      vehicle_id: vehicleId, origin: INDORE, destination: UJJAIN, pickup: INDORE, drop: UJJAIN,
+      date: tomorrow, departure_time: '09:00', available_seats: 3, price_per_seat: 150,
+      preferences: { women_only: true },
+    },
+  });
+
+await expectReject('a man cannot publish a women-only ride', 'WOMEN_ONLY_RESTRICTED', () =>
+  publishWomenOnly(host, vehicle.id));
+
+await expectReject('an account with no gender set cannot publish one', 'WOMEN_ONLY_RESTRICTED', async () => {
+  const theirVehicle = await vehicleService.createVehicle({
+    userId: unsetGender,
+    payload: { model: 'Alto', registrationNumber: 'MP09WO0002', seatCapacity: 4 },
+  });
+  return publishWomenOnly(unsetGender, theirVehicle.id);
+});
+
+const womenRide = await publishWomenOnly();
+
+await check('a woman can publish one and it is flagged', async () => {
+  if (womenRide.preferences?.womenOnly !== true) throw new Error('flag not stored');
+});
+
+await expectReject('a man cannot book a women-only ride', 'WOMEN_ONLY_RESTRICTED', () =>
+  bookingService.createBooking({
+    rideId: womenRide.rideId, userId: bob, payload: bookingPayload(1),
+  }));
+
+await expectReject('an account with no gender set cannot book one', 'WOMEN_ONLY_RESTRICTED', () =>
+  bookingService.createBooking({
+    rideId: womenRide.rideId, userId: unsetGender, payload: bookingPayload(1),
+  }));
+
+await check('a woman can book it', async () => {
+  const booking = await bookingService.createBooking({
+    rideId: womenRide.rideId, userId: meera, payload: bookingPayload(1),
+  });
+  if (booking.status !== 'PENDING') throw new Error(`status ${booking.status}`);
+});
+
+await check('search hides women-only rides from men', async () => {
+  const seenByMan = await rideService.searchRides({
+    userId: bob,
+    query: { from_lat: 22.7196, from_lng: 75.8577, to_lat: 23.1765, to_lng: 75.7885 },
+  });
+  if (seenByMan.some((row) => row.rideId === womenRide.rideId)) {
+    throw new Error('a women-only ride was listed to a man');
+  }
+});
+
+await check('search shows them to women', async () => {
+  const seenByWoman = await rideService.searchRides({
+    userId: carol,
+    query: { from_lat: 22.7196, from_lng: 75.8577, to_lat: 23.1765, to_lng: 75.7885 },
+  });
+  if (!seenByWoman.some((row) => row.rideId === womenRide.rideId)) {
+    throw new Error('a women-only ride was hidden from a woman');
+  }
+});
+
+await check('ordinary rides are still visible to everyone', async () => {
+  const seenByMan = await rideService.searchRides({
+    userId: bob,
+    query: { from_lat: 22.7196, from_lng: 75.8577, to_lat: 23.1765, to_lng: 75.7885 },
+  });
+  if (!seenByMan.length) throw new Error('the filter hid ordinary rides too');
 });
 
 console.log('\nDATA INTEGRITY (§47)');

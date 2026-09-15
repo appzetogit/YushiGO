@@ -76,6 +76,14 @@ const carpoolRideSchema = new mongoose.Schema(
     pricePerSeat: { type: Number, required: true, min: 0 },
 
     preferences: {
+      /**
+       * Every occupant is a woman, the host included.
+       *
+       * Enforced on publishing, on searching and on booking rather than shown as
+       * a label — a safety promise a passenger relies on has to be something the
+       * server refuses to break, not a filter the client is trusted to apply.
+       */
+      womenOnly: { type: Boolean, default: false },
       ac: { type: Boolean, default: false },
       smokingAllowed: { type: Boolean, default: false },
       petsAllowed: { type: Boolean, default: false },
