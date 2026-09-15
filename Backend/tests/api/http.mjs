@@ -332,6 +332,48 @@ await check('GET /carpool/my-trips separates the two roles', async () => {
   if (body.data.passenger_trips.length) throw new Error('type=offered returned bookings');
 });
 
+console.log('\nPROFILE');
+
+await check('gender can be changed and reads back', async () => {
+  const before = await call('GET', '/users/me', { token: riderToken });
+  if (before.body.data.user.gender === undefined) throw new Error('gender not exposed on read');
+
+  const updated = await call('PATCH', '/users/me', {
+    token: riderToken,
+    body: { gender: 'female' },
+  });
+  if (updated.status !== 200) throw new Error(`status ${updated.status}`);
+  if (updated.body.data.user.gender !== 'female') {
+    throw new Error(`response says ${updated.body.data.user.gender}`);
+  }
+
+  // Re-read matters: the previous behaviour returned 200 and persisted nothing,
+  // so a test that only checked the response body would have passed.
+  const after = await call('GET', '/users/me', { token: riderToken });
+  if (after.body.data.user.gender !== 'female') {
+    throw new Error(`not persisted, reads back as ${after.body.data.user.gender}`);
+  }
+});
+
+await check('changing gender leaves the other fields alone', async () => {
+  await call('PATCH', '/users/me', { token: riderToken, body: { name: 'Aarohi P' } });
+  await call('PATCH', '/users/me', { token: riderToken, body: { gender: 'male' } });
+
+  const me = await call('GET', '/users/me', { token: riderToken });
+  if (me.body.data.user.name !== 'Aarohi P') throw new Error('name was clobbered');
+  if (me.body.data.user.gender !== 'male') throw new Error('gender did not change');
+});
+
+await check('an unrecognised gender falls back rather than corrupting the record', async () => {
+  const res = await call('PATCH', '/users/me', { token: riderToken, body: { gender: 'banana' } });
+  if (res.status !== 200) throw new Error(`status ${res.status}`);
+  // Same fallback registration applies to the same input.
+  if (res.body.data.user.gender !== 'prefer-not-to-say') {
+    throw new Error(`got ${res.body.data.user.gender}`);
+  }
+});
+
+
 console.log('\nSTUDENT RIDE OVER HTTP');
 
 let studentId;
