@@ -437,6 +437,58 @@ await check('DELETE deactivates rather than removing', async () => {
   if (still.status !== 200) throw new Error('deactivated student should still resolve');
 });
 
+console.log('\nRIDE DETAIL SHAPE');
+
+await check('GET /rides/:rideId returns driver as an object, matching the socket contract', async () => {
+  const driverId = new mongoose.Types.ObjectId();
+  await mongoose.connection.collection('taxidrivers').insertOne({
+    _id: driverId, name: 'Rakesh Kumar', phone: '9998887777', rating: 4.8,
+    vehicleNumber: 'MP09AB1234', vehicleMake: 'Maruti', vehicleModel: 'Swift',
+    vehicleColor: 'White', vehicleType: 'car', approve: true, status: 'active',
+  });
+
+  const [ride] = await mongoose.model('TaxiRide').create([{
+    userId: riderId,
+    driverId,
+    pickupLocation: { type: 'Point', coordinates: [77.51, 28.46] },
+    dropLocation: { type: 'Point', coordinates: [77.52, 28.47] },
+    pickupAddress: 'Sector 36', dropAddress: 'School',
+    fare: 129.78, serviceType: 'ride', status: 'ongoing', liveStatus: 'started',
+    lastDriverLocation: { type: 'Point', coordinates: [77.515, 28.465] },
+  }]);
+
+  const { status, body } = await call('GET', `/rides/${ride._id}`, { token: riderToken });
+  if (status !== 200) throw new Error(`status ${status} (${body?.message})`);
+
+  const data = body.data;
+
+  // The bug: `driver` did not exist, only a populated `driverId`.
+  if (!data.driver) throw new Error('driver key missing');
+  if (data.driver.name !== 'Rakesh Kumar') throw new Error('driver name missing');
+  if (data.driver.phone !== '9998887777') throw new Error('driver phone missing');
+  if (data.driver.vehicleNumber !== 'MP09AB1234') throw new Error('plate missing');
+  if (typeof data.driver.totalTrips !== 'number') throw new Error('totalTrips missing');
+  if (data.vehicle?.model !== 'Maruti Swift') throw new Error(`vehicle model was ${data.vehicle?.model}`);
+
+  // Additive: the old key is still there for anything mid-migration.
+  if (!data.driverId) throw new Error('driverId was removed, breaking existing clients');
+  if (!data.lastDriverLocation) throw new Error('lastDriverLocation lost');
+});
+
+await check('driver is null on an unassigned ride, not an empty object', async () => {
+  const [ride] = await mongoose.model('TaxiRide').create([{
+    userId: riderId,
+    pickupLocation: { type: 'Point', coordinates: [77.51, 28.46] },
+    dropLocation: { type: 'Point', coordinates: [77.52, 28.47] },
+    fare: 100, serviceType: 'ride', status: 'searching', liveStatus: 'searching',
+  }]);
+
+  const { body } = await call('GET', `/rides/${ride._id}`, { token: riderToken });
+  if (body.data.driver !== null) throw new Error(`expected null, got ${JSON.stringify(body.data.driver)}`);
+  if (body.data.vehicle !== null) throw new Error('vehicle should be null too');
+});
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 
 await new Promise((resolve) => server.close(resolve));
