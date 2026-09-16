@@ -1,6 +1,11 @@
 /**
  * Student-ride socket emitters.
  *
+ * There is deliberately no location emitter here. Driver position is already
+ * broadcast to the dispatch ride's room, and `student-ride:join` subscribes the
+ * client to that room too — duplicating the stream would mean a database lookup
+ * on every GPS ping to republish bytes the app is already receiving.
+ *
  * Deliberately importing nothing. These are called from the dispatch engine's
  * status path, and the handler module they used to live in reaches
  * shareService → studentRideService → fareService → rideService, which is the
@@ -43,19 +48,4 @@ export const emitStudentRideStatus = (io, ride) => {
     // receiving updates after tracking should have stopped.
     io.in(room).socketsLeave(room);
   }
-};
-
-export const emitStudentRideLocation = (io, { studentRideId, latitude, longitude, heading, speed }) => {
-  if (!io || !studentRideId) {
-    return;
-  }
-
-  io.to(getStudentRideRoom(studentRideId)).emit('student-ride:location:updated', {
-    studentRideId: String(studentRideId),
-    latitude,
-    longitude,
-    heading: Number.isFinite(Number(heading)) ? Number(heading) : null,
-    speed: Number.isFinite(Number(speed)) ? Number(speed) : null,
-    timestamp: new Date().toISOString(),
-  });
 };

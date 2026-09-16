@@ -19,6 +19,7 @@ import {
   getAllowedRidePaymentMethodsForPricing,
   getActiveRideForIdentity,
   getRideDetails,
+  serializeRideDetail,
   getRideRoom,
   increaseRideBidCeiling,
   listRideBidsForUser,
@@ -374,7 +375,7 @@ export const getRideById = async (req, res) => {
 
   res.json({
     success: true,
-    data: ride,
+    data: await serializeRideDetail(ride),
   });
 };
 

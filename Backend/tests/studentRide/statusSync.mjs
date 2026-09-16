@@ -302,6 +302,57 @@ await check('the bypass is visible through the API, not just in the database', a
 });
 
 
+console.log('\nRESPONSE SHAPE');
+
+await check('a student ride carries the driver and vehicle from the dispatch ride', async () => {
+  const ride = await booked();
+  await mongoose.connection.collection('taxidrivers').updateOne(
+    { _id: driverId },
+    {
+      $set: {
+        name: 'Rakesh Kumar', phone: '9998887777', rating: 4.8,
+        vehicleNumber: 'MP09AB1234', vehicleMake: 'Maruti',
+        vehicleModel: 'Swift', vehicleColor: 'White', vehicleType: 'car',
+      },
+    },
+    { upsert: true },
+  );
+  await dispatchTo(ride.rideId, 'started');
+
+  const detail = await rideService.getStudentRide({
+    studentRideId: ride.studentRideId, userId: parent,
+  });
+
+  // The whole point: one call, not a merge of two.
+  if (detail.driver?.name !== 'Rakesh Kumar') throw new Error('driver name missing');
+  if (detail.driver?.phone !== '9998887777') throw new Error('driver phone missing');
+  if (detail.vehicle?.plateNumber !== 'MP09AB1234') throw new Error('plate missing');
+  if (detail.vehicle?.model !== 'Maruti Swift') throw new Error(`model was ${detail.vehicle?.model}`);
+  if (typeof detail.driver?.totalTrips !== 'number') throw new Error('totalTrips missing');
+  if (!detail.dispatch?.liveStatus) throw new Error('dispatch status missing');
+  if (!(detail.fare > 0)) throw new Error('fare missing');
+
+  // Existing keys are untouched.
+  if (!detail.studentRideId || !detail.status || !detail.pickup) throw new Error('an existing field was dropped');
+});
+
+await check('driver is null while unassigned, not an empty object', async () => {
+  const ride = await booked();
+  const detail = await rideService.getStudentRide({
+    studentRideId: ride.studentRideId, userId: parent,
+  });
+
+  if (detail.driver !== null) throw new Error(`expected null, got ${JSON.stringify(detail.driver)}`);
+  if (detail.vehicle !== null) throw new Error('vehicle should be null too');
+});
+
+await check('the ride list carries the same summary', async () => {
+  const rides = await rideService.listStudentRides({ userId: parent });
+  if (!rides.length) throw new Error('no rides listed');
+  if (!('dispatch' in rides[0])) throw new Error('summary missing from the list');
+});
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 
 await mongoose.connection.db.dropDatabase();

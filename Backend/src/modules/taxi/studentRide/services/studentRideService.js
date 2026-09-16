@@ -14,6 +14,7 @@ import { requireOwnedSavedLocation } from './savedLocationService.js';
 import { issueOtp, serializeOtpState, verifyOtp } from './otpService.js';
 import { listEmergencyContacts } from './guardianService.js';
 import { emitStudentRideStatus } from '../socket/emitters.js';
+import { Ride } from '../../user/models/Ride.js';
 import { quoteStudentRideFare } from './fareService.js';
 
 /**
@@ -133,6 +134,67 @@ export const serializeStudentRide = (ride, { student = null, timeline = null } =
   createdAt: ride.createdAt,
   ...(timeline ? { timeline } : {}),
 });
+
+/**
+ * Driver, vehicle, fare and live position, taken from the dispatch ride.
+ *
+ * A student ride holds no driver or vehicle fields — those live on the dispatch
+ * ride it travels on. Without this the app had to fetch both documents every
+ * poll and merge them itself, which is two round trips per active ride and a
+ * merge that was silently producing blank driver details.
+ *
+ * Additive: every existing key on the student-ride payload is untouched.
+ */
+const buildDispatchSummary = async (rideId) => {
+  if (!rideId) {
+    return null;
+  }
+
+  const ride = await Ride.findById(rideId)
+    .select('driverId fare estimatedDurationMinutes estimatedDistanceMeters status liveStatus lastDriverLocation paymentMethod')
+    .populate('driverId', 'name phone profileImage rating vehicleType vehicleNumber vehicleMake vehicleModel vehicleColor vehicleImage');
+
+  if (!ride) {
+    return null;
+  }
+
+  const driver = ride.driverId && typeof ride.driverId === 'object' ? ride.driverId : null;
+  const coordinates = ride.lastDriverLocation?.coordinates;
+
+  return {
+    dispatch: {
+      status: ride.status,
+      liveStatus: ride.liveStatus,
+    },
+    // null while unassigned rather than an empty object, so the app can branch.
+    driver: driver
+      ? {
+        id: String(driver._id),
+        name: driver.name || '',
+        phone: driver.phone || '',
+        photoUrl: driver.profileImage || '',
+        rating: driver.rating || null,
+        totalTrips: await Ride.countDocuments({ driverId: driver._id, status: 'completed' }),
+      }
+      : null,
+    vehicle: driver
+      ? {
+        plateNumber: driver.vehicleNumber || '',
+        model: [driver.vehicleMake, driver.vehicleModel].filter(Boolean).join(' '),
+        color: driver.vehicleColor || '',
+        type: driver.vehicleType || '',
+        imageUrl: driver.vehicleImage || '',
+      }
+      : null,
+    fare: Number(ride.fare || 0),
+    paymentMethod: ride.paymentMethod || 'cash',
+    estimatedDurationMinutes: Number(ride.estimatedDurationMinutes || 0),
+    estimatedDistanceMeters: Number(ride.estimatedDistanceMeters || 0),
+    lastDriverLocation: Array.isArray(coordinates) && coordinates.length === 2
+      ? { latitude: coordinates[1], longitude: coordinates[0] }
+      : null,
+  };
+};
 
 const snapshotFromSavedLocation = (location) => ({
   savedLocationId: location._id,
@@ -687,12 +749,15 @@ export const cancelStudentRide = async ({ studentRideId, userId, reason, cancelD
 
 export const getStudentRide = async ({ studentRideId, userId }) => {
   const ride = await requireOwnedStudentRide({ studentRideId, userId });
-  const [student, events] = await Promise.all([
+  const [student, events, dispatchSummary] = await Promise.all([
     Student.findById(ride.studentId),
     StudentRideEvent.find({ studentRideId: ride._id }).sort({ createdAt: 1 }),
+    buildDispatchSummary(ride.rideId),
   ]);
 
-  return serializeStudentRide(ride, {
+  return {
+    ...(dispatchSummary || {}),
+    ...serializeStudentRide(ride, {
     student,
     timeline: events.map((event) => ({
       eventType: event.eventType,
@@ -701,7 +766,8 @@ export const getStudentRide = async ({ studentRideId, userId }) => {
       description: event.description || '',
       at: event.createdAt,
     })),
-  });
+    }),
+  };
 };
 
 export const listStudentRides = async ({ userId, studentId, status, upcoming }) => {
@@ -734,7 +800,10 @@ export const listStudentRides = async ({ userId, studentId, status, upcoming }) 
     .limit(100)
     .populate('studentId', 'name profilePhotoUrl');
 
-  return rides.map((ride) => serializeStudentRide(ride, { student: ride.studentId }));
+  return Promise.all(rides.map(async (ride) => ({
+    ...((await buildDispatchSummary(ride.rideId)) || {}),
+    ...serializeStudentRide(ride, { student: ride.studentId }),
+  })));
 };
 
 /** Guardians to alert for this ride — used by the SOS flow in the next gate. */

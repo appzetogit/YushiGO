@@ -4,7 +4,7 @@ import { getStudentRideRoom } from './emitters.js';
 
 // Re-exported so existing importers keep working; the emitters themselves live
 // in a dependency-free module the dispatch engine can also call.
-export { getStudentRideRoom, emitStudentRideStatus, emitStudentRideLocation } from './emitters.js';
+export { getStudentRideRoom, emitStudentRideStatus } from './emitters.js';
 
 /**
  * Live tracking for a student ride, for two very different audiences (§34).
@@ -57,7 +57,7 @@ export const registerStudentRideSocketHandlers = ({ socket, onAsync }) => {
         return;
       }
 
-      const ride = await StudentRide.findById(studentRideId).select('userId status');
+      const ride = await StudentRide.findById(studentRideId).select('userId status rideId');
 
       // Ownership is resolved server-side; an id alone grants nothing.
       if (!ride || String(ride.userId) !== String(identity.sub)) {
@@ -66,9 +66,26 @@ export const registerStudentRideSocketHandlers = ({ socket, onAsync }) => {
       }
 
       socket.join(getStudentRideRoom(studentRideId));
+
+      /**
+       * Also join the dispatch ride's room, where the driver's position is
+       * already broadcast.
+       *
+       * The alternative was a second location event for student rides, which
+       * meant looking up the companion on every GPS ping — several per second
+       * across the fleet — to publish bytes the existing stream already carries.
+       * One extra room join at subscribe time costs nothing and means the app
+       * never has to know the dispatch ride exists.
+       */
+      if (ride.rideId) {
+        socket.join(`ride_${ride.rideId}`);
+      }
+
       socket.emit('student-ride:joined', {
         studentRideId: String(studentRideId),
         status: ride.status,
+        // Named so the client can correlate ride:driver-location:updated events.
+        rideId: ride.rideId ? String(ride.rideId) : null,
       });
     }),
   );
@@ -76,8 +93,16 @@ export const registerStudentRideSocketHandlers = ({ socket, onAsync }) => {
   socket.on(
     'student-ride:leave',
     onAsync(socket, async ({ studentRideId }) => {
-      if (studentRideId) {
-        socket.leave(getStudentRideRoom(studentRideId));
+      if (!studentRideId) {
+        return;
+      }
+
+      socket.leave(getStudentRideRoom(studentRideId));
+
+      const ride = await StudentRide.findById(studentRideId).select('rideId');
+
+      if (ride?.rideId) {
+        socket.leave(`ride_${ride.rideId}`);
       }
     }),
   );

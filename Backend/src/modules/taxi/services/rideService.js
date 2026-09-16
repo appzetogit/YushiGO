@@ -1301,6 +1301,73 @@ export const createRideRecord = async ({
   throw lastError || new ApiError(500, 'Failed to create ride with promo');
 };
 
+/**
+ * Lifetime completed trips for a driver.
+ *
+ * Counted rather than read: the only counter on Driver is a per-day summary
+ * (`todaySummary.rides`), so there is no lifetime figure to read. The query is
+ * covered by the { driverId, createdAt } index.
+ */
+const countDriverTrips = async (driverId) => {
+  if (!driverId) {
+    return 0;
+  }
+
+  return Ride.countDocuments({ driverId, status: RIDE_STATUS.COMPLETED });
+};
+
+/**
+ * Ride detail for a participant, in the shape the socket already uses.
+ *
+ * REST returned the raw document, so the driver arrived as a populated
+ * `driverId` and there was no `driver` key at all — while the socket payload for
+ * the same ride called it `driver`. A client written against one contract read
+ * `undefined` from the other, which is why driver name, photo, rating and plate
+ * stayed blank while the map marker worked: `lastDriverLocation` is a real field
+ * on the document and survived the mismatch.
+ *
+ * Additive on purpose. Every existing key, `driverId` included, is preserved, so
+ * nothing reading the old shape breaks while clients move across.
+ */
+export const serializeRideDetail = async (ride) => {
+  if (!ride) {
+    return null;
+  }
+
+  const plain = typeof ride.toObject === 'function' ? ride.toObject() : { ...ride };
+  const driver = ride.driverId && typeof ride.driverId === 'object' ? ride.driverId : null;
+
+  return {
+    ...plain,
+    // null rather than {} while unassigned, so a client can branch on presence.
+    driver: driver
+      ? {
+        _id: String(driver._id),
+        name: driver.name || '',
+        phone: driver.phone || '',
+        profileImage: driver.profileImage || '',
+        rating: driver.rating || null,
+        totalTrips: await countDriverTrips(driver._id),
+        vehicleType: driver.vehicleType || '',
+        vehicleNumber: driver.vehicleNumber || '',
+        vehicleMake: driver.vehicleMake || '',
+        vehicleModel: driver.vehicleModel || '',
+        vehicleColor: driver.vehicleColor || '',
+        vehicleImage: driver.vehicleImage || '',
+      }
+      : null,
+    vehicle: driver
+      ? {
+        plateNumber: driver.vehicleNumber || '',
+        model: [driver.vehicleMake, driver.vehicleModel].filter(Boolean).join(' '),
+        color: driver.vehicleColor || '',
+        type: driver.vehicleType || '',
+        imageUrl: driver.vehicleImage || '',
+      }
+      : null,
+  };
+};
+
 export const getRideDetails = async (rideId) => {
   const ride = await Ride.findById(rideId)
     .populate('deliveryId')
