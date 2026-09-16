@@ -13,7 +13,23 @@ import { requireOwnedStudent, studentRideError } from './studentService.js';
 import { requireOwnedSavedLocation } from './savedLocationService.js';
 import { issueOtp, serializeOtpState, verifyOtp } from './otpService.js';
 import { listEmergencyContacts } from './guardianService.js';
+import { emitStudentRideStatus } from '../socket/emitters.js';
 import { quoteStudentRideFare } from './fareService.js';
+
+/**
+ * Broadcast a status change to anyone tracking the ride.
+ *
+ * The socket server is resolved at call time: importing dispatchService here
+ * would run back through rideService, which this module already feeds.
+ */
+const broadcast = async (ride) => {
+  try {
+    const { getSocketServer } = await import('../../services/dispatchService.js');
+    emitStudentRideStatus(getSocketServer(), ride);
+  } catch (error) {
+    console.error('[student-ride] status broadcast failed', error?.message || error);
+  }
+};
 
 /**
  * Append an event in the caller's transaction (§75).
@@ -456,6 +472,8 @@ export const verifyRideOtp = async ({
       result = fresh;
     });
 
+    await broadcast(result);
+
     return serializeStudentRide(result);
   } finally {
     await session.endSession();
@@ -592,6 +610,8 @@ export const advanceStatus = async ({ studentRideId, nextStatus, actor, expectDr
       outcome = { ride, dropOtp };
     });
 
+    await broadcast(outcome.ride);
+
     return {
       ...serializeStudentRide(outcome.ride),
       ...(outcome.dropOtp ? { dropOtp: outcome.dropOtp } : {}),
@@ -645,6 +665,8 @@ export const cancelStudentRide = async ({ studentRideId, userId, reason, cancelD
     if (cancelDispatchRide) {
       await cancelDispatchRide({ rideId: cancelled.rideId, userId }).catch(() => null);
     }
+
+    await broadcast(cancelled);
 
     return serializeStudentRide(cancelled);
   } finally {

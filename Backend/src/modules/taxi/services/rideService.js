@@ -4,6 +4,7 @@ import { ApiError } from '../../../utils/ApiError.js';
 import { getOrLoadCachedValue } from '../../../utils/cache.js';
 import { normalizePoint, toPoint } from '../../../utils/geo.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS } from '../constants/index.js';
+import { syncStudentRideWithDispatch } from '../studentRide/services/statusSyncService.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 import { SetPrice } from '../admin/models/SetPrice.js';
 import { Vehicle } from '../admin/models/Vehicle.js';
@@ -46,6 +47,7 @@ const clearUserActiveRideIfPresent = async (user) => {
   activeRide.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
   await activeRide.save();
   await syncDeliveryWithRide(activeRide);
+  await syncStudentRideWithDispatch(activeRide);
 
   await Promise.all([
     activeRide.driverId ? Driver.findByIdAndUpdate(activeRide.driverId, { isOnRide: false }) : Promise.resolve(),
@@ -1203,6 +1205,7 @@ export const createRideRecord = async ({
     user.currentRideId = ride._id;
     await user.save();
     await syncDeliveryWithRide(ride);
+    await syncStudentRideWithDispatch(ride);
 
     return ride;
   }
@@ -1277,6 +1280,7 @@ export const createRideRecord = async ({
 
       await session.commitTransaction();
       await syncDeliveryWithRide(rideDoc);
+      await syncStudentRideWithDispatch(rideDoc);
       return rideDoc;
     } catch (error) {
       lastError = error;
@@ -1761,6 +1765,7 @@ export const acceptRideAssignment = async ({ rideId, driverId }) => {
       await driver.save({ session });
       await session.commitTransaction();
       await syncDeliveryWithRide(ride);
+      await syncStudentRideWithDispatch(ride);
 
       return ride;
     } catch (error) {
@@ -1847,6 +1852,7 @@ export const updateRideLifecycle = async ({ rideId, driverId, nextStatus, paymen
 
   await ride.save();
   await syncDeliveryWithRide(ride);
+  await syncStudentRideWithDispatch(ride);
 
   if (nextStatus === RIDE_LIVE_STATUS.STARTED) {
     await notifyGuardiansIfStudentRide(ride);
@@ -2233,6 +2239,7 @@ export const acceptRideBidAssignment = async ({ rideId, bidId, userId }) => {
 
       await session.commitTransaction();
       await syncDeliveryWithRide(ride);
+      await syncStudentRideWithDispatch(ride);
 
       return ride;
     } catch (error) {

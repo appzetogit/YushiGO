@@ -1,5 +1,10 @@
 import { StudentRide } from '../models/StudentRide.js';
 import { resolveShareTokenForSocket } from '../services/shareService.js';
+import { getStudentRideRoom } from './emitters.js';
+
+// Re-exported so existing importers keep working; the emitters themselves live
+// in a dependency-free module the dispatch engine can also call.
+export { getStudentRideRoom, emitStudentRideStatus, emitStudentRideLocation } from './emitters.js';
 
 /**
  * Live tracking for a student ride, for two very different audiences (§34).
@@ -10,8 +15,6 @@ import { resolveShareTokenForSocket } from '../services/shareService.js';
  * one room, it is never given a room name it did not already hold a token for,
  * and it can emit nothing.
  */
-export const getStudentRideRoom = (studentRideId) => `student_ride:${studentRideId}`;
-
 export const SHARE_VIEWER_ROLE = 'share-viewer';
 
 /**
@@ -26,22 +29,6 @@ export const authorizeShareViewer = async (shareToken) => {
 
   return { role: SHARE_VIEWER_ROLE, sub: null, studentRideId };
 };
-
-/**
- * What a share viewer is sent.
- *
- * Location and status only. The identifying detail a watcher needs already came
- * from the public REST payload; repeating it on every position update would put
- * it on the wire far more often than necessary.
- */
-const publicLocationEvent = ({ studentRideId, latitude, longitude, heading, speed }) => ({
-  studentRideId: String(studentRideId),
-  latitude,
-  longitude,
-  heading: Number.isFinite(Number(heading)) ? Number(heading) : null,
-  speed: Number.isFinite(Number(speed)) ? Number(speed) : null,
-  timestamp: new Date().toISOString(),
-});
 
 /**
  * Wire up a share-viewer connection.
@@ -94,48 +81,4 @@ export const registerStudentRideSocketHandlers = ({ socket, onAsync }) => {
       }
     }),
   );
-};
-
-/**
- * Relay the assigned driver's position to everyone watching this student ride.
- *
- * Fed from the dispatch location pipeline rather than from a second stream of
- * GPS: the driver app already pushes position for the underlying ride, and
- * duplicating that would double the traffic and let the two disagree.
- */
-export const emitStudentRideLocation = (io, { studentRideId, latitude, longitude, heading, speed }) => {
-  if (!io || !studentRideId) {
-    return;
-  }
-
-  io.to(getStudentRideRoom(studentRideId)).emit(
-    'student-ride:location:updated',
-    publicLocationEvent({ studentRideId, latitude, longitude, heading, speed }),
-  );
-};
-
-/** Announce a status change, and tell watchers when to stop watching (§34). */
-export const emitStudentRideStatus = (io, ride) => {
-  if (!io || !ride) {
-    return;
-  }
-
-  const room = getStudentRideRoom(ride._id);
-  const terminal = ['COMPLETED', 'CANCELLED', 'NO_SHOW', 'FAILED'].includes(ride.status);
-
-  io.to(room).emit('student-ride:status:updated', {
-    studentRideId: String(ride._id),
-    status: ride.status,
-  });
-
-  if (terminal) {
-    io.to(room).emit('student-ride:completed', {
-      studentRideId: String(ride._id),
-      status: ride.status,
-    });
-
-    // Watchers are disconnected from the room as the journey ends, so a stale
-    // page cannot keep receiving anything after tracking should have stopped.
-    io.in(room).socketsLeave(room);
-  }
 };

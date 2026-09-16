@@ -82,6 +82,19 @@ const studentRideSchema = new mongoose.Schema(
     pickupOtp: { type: otpSchema, default: () => ({}) },
     dropOtp: { type: otpSchema, default: () => ({}) },
 
+    /**
+     * True when the ride passed a verification point without one happening.
+     *
+     * The dispatch engine can move a ride to started or completed on the
+     * driver's word alone. The status has to follow, or the parent's app sits on
+     * "finding driver" for the whole trip — but the record must not claim a
+     * check occurred. The OTP stays unverified and this says so.
+     */
+    otpBypassed: {
+      pickup: { type: Boolean, default: false },
+      drop: { type: Boolean, default: false },
+    },
+
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
     cancelledAt: { type: Date, default: null },
