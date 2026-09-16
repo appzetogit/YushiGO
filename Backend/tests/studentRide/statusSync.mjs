@@ -288,6 +288,20 @@ await check('a completed trip with no codes flags both gates', async () => {
   }
 });
 
+await check('the bypass is visible through the API, not just in the database', async () => {
+  const ride = await booked();
+  await dispatchTo(ride.rideId, 'completed', 'completed');
+
+  const detail = await rideService.getStudentRide({
+    studentRideId: ride.studentRideId, userId: parent,
+  });
+
+  if (detail.otpBypassed?.pickup !== true) throw new Error('pickup bypass not surfaced');
+  if (detail.otpBypassed?.drop !== true) throw new Error('drop bypass not surfaced');
+  if (detail.pickupOtp.verified !== false) throw new Error('OTP reported as verified');
+});
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 
 await mongoose.connection.db.dropDatabase();
