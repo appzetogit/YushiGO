@@ -86,6 +86,17 @@ const rideSchema = new mongoose.Schema(
       ref: 'TaxiStudentRide',
       default: null,
     },
+    /**
+     * Copied from the StudentRide so driver payloads can describe a student ride
+     * without a lookup. The offer is built inside the dispatch loop for every
+     * candidate driver, and a query there would be paid by every ride type.
+     * Written at booking and on each successful OTP verification.
+     */
+    studentSummary: {
+      displayName: { type: String, default: '', trim: true },
+      pickupOtpVerified: { type: Boolean, default: false },
+      dropOtpVerified: { type: Boolean, default: false },
+    },
     // 'student' rides carry a StudentRide companion document, the same way
     // 'parcel' rides carry a Delivery.
     serviceType: {

@@ -8,6 +8,7 @@ import {
   STUDENT_RIDE_EVENTS,
   STUDENT_RIDE_STATUS,
   STUDENT_RIDE_TRANSITIONS,
+  studentRideConfig,
 } from '../constants/index.js';
 import { requireOwnedStudent, studentRideError } from './studentService.js';
 import { requireOwnedSavedLocation } from './savedLocationService.js';
@@ -16,6 +17,7 @@ import { listEmergencyContacts } from './guardianService.js';
 import { emitStudentRideStatus } from '../socket/emitters.js';
 import { Ride } from '../../user/models/Ride.js';
 import { quoteStudentRideFare } from './fareService.js';
+import { applyLifecycleEffects } from './lifecycleEffects.js';
 
 /**
  * Broadcast a status change to anyone tracking the ride.
@@ -152,7 +154,7 @@ const buildDispatchSummary = async (rideId) => {
 
   const ride = await Ride.findById(rideId)
     .select('driverId fare estimatedDurationMinutes estimatedDistanceMeters status liveStatus lastDriverLocation paymentMethod')
-    .populate('driverId', 'name phone profileImage rating vehicleType vehicleNumber vehicleMake vehicleModel vehicleColor vehicleImage');
+    .populate('driverId', 'name phone profileImage rating vehicleType vehicleNumber vehicleMake vehicleModel vehicleColor vehicleImage completedRidesCount');
 
   if (!ride) {
     return null;
@@ -174,7 +176,7 @@ const buildDispatchSummary = async (rideId) => {
         phone: driver.phone || '',
         photoUrl: driver.profileImage || '',
         rating: driver.rating || null,
-        totalTrips: await Ride.countDocuments({ driverId: driver._id, status: 'completed' }),
+        totalTrips: Number(driver.completedRidesCount || 0),
       }
       : null,
     vehicle: driver
@@ -327,10 +329,14 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
         scheduledAt,
         payload,
         quote,
+        studentName: student.name,
         session,
       });
 
-      const pickupCode = issueOtp();
+      const pickupCode = issueOtp({
+        validFrom: scheduledAt,
+        lifetimeSeconds: studentRideConfig().pickupOtpExpirySeconds,
+      });
 
       const [studentRide] = await StudentRide.create([{
         userId,
@@ -530,6 +536,14 @@ export const verifyRideOtp = async ({
 
       await fresh.save({ session });
 
+      // Mirrored onto the dispatch ride in the same transaction, so the driver's
+      // payload can never show a verification the student ride does not have.
+      await Ride.updateOne(
+        { _id: fresh.rideId },
+        { $set: { [`studentSummary.${isPickup ? 'pickupOtpVerified' : 'dropOtpVerified'}`]: true } },
+        { session },
+      );
+
       await recordEvent({
         studentRideId: fresh._id,
         eventType: isPickup
@@ -597,7 +611,11 @@ export const reissueOtp = async ({ studentRideId, userId, kind }) => {
         );
       }
 
-      const code = issueOtp();
+      // A reissued pickup code gets the same window as the original, so reissuing
+      // ahead of a scheduled ride does not shorten it.
+      const code = isPickup
+        ? issueOtp({ validFrom: ride.scheduledAt, lifetimeSeconds: studentRideConfig().pickupOtpExpirySeconds })
+        : issueOtp();
       ride[field] = code.fields;
       await ride.save({ session });
 
@@ -684,6 +702,7 @@ export const advanceStatus = async ({ studentRideId, nextStatus, actor, expectDr
     });
 
     await broadcast(outcome.ride);
+    applyLifecycleEffects({ studentRide: outcome.ride, statuses: [outcome.ride.status] });
 
     return {
       ...serializeStudentRide(outcome.ride),
@@ -740,6 +759,7 @@ export const cancelStudentRide = async ({ studentRideId, userId, reason, cancelD
     }
 
     await broadcast(cancelled);
+    applyLifecycleEffects({ studentRide: cancelled, statuses: [cancelled.status] });
 
     return serializeStudentRide(cancelled);
   } finally {

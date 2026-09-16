@@ -5,6 +5,7 @@ import * as rideService from '../services/studentRideService.js';
 import * as dispatch from '../services/dispatchAdapter.js';
 import * as shareService from '../services/shareService.js';
 import * as fareService from '../services/fareService.js';
+import * as adminStudentRideService from '../services/adminStudentRideService.js';
 import * as emergencyService from '../services/emergencyService.js';
 import * as notifications from '../services/studentRideNotifications.js';
 
@@ -182,6 +183,11 @@ export const createStudentRide = async (req, res) => {
     studentRideId: ride.studentRideId,
   });
 
+  // After the link exists, so the first status sync the offer triggers can find
+  // the companion. Not awaited into the response path: it never throws, and the
+  // parent does not wait on driver matching to see their booking confirmed.
+  dispatch.startStudentRideDispatch(ride.rideId);
+
   res.status(201).json({ success: true, data: ride });
 };
 
@@ -343,4 +349,19 @@ export const resolveEmergency = async (req, res) => {
   });
 
   res.json({ success: true, data: emergency });
+};
+
+export const adminListStudentRides = async (req, res) => {
+  const data = await adminStudentRideService.listStudentRidesForAdmin(req.query);
+  res.json({ success: true, data });
+};
+
+export const adminGetStudentRide = async (req, res) => {
+  const data = await adminStudentRideService.getStudentRideForAdmin(req.params.studentRideId);
+  res.json({ success: true, data });
+};
+
+export const adminListEmergencies = async (req, res) => {
+  const data = await adminStudentRideService.listEmergenciesForAdmin(req.query);
+  res.json({ success: true, data });
 };

@@ -5,6 +5,7 @@ import { getOrLoadCachedValue } from '../../../utils/cache.js';
 import { normalizePoint, toPoint } from '../../../utils/geo.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS } from '../constants/index.js';
 import { syncStudentRideWithDispatch } from '../studentRide/services/statusSyncService.js';
+import { studentDriverBlock } from '../studentRide/services/driverPayload.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 import { SetPrice } from '../admin/models/SetPrice.js';
 import { Vehicle } from '../admin/models/Vehicle.js';
@@ -1302,21 +1303,6 @@ export const createRideRecord = async ({
 };
 
 /**
- * Lifetime completed trips for a driver.
- *
- * Counted rather than read: the only counter on Driver is a per-day summary
- * (`todaySummary.rides`), so there is no lifetime figure to read. The query is
- * covered by the { driverId, createdAt } index.
- */
-const countDriverTrips = async (driverId) => {
-  if (!driverId) {
-    return 0;
-  }
-
-  return Ride.countDocuments({ driverId, status: RIDE_STATUS.COMPLETED });
-};
-
-/**
  * Ride detail for a participant, in the shape the socket already uses.
  *
  * REST returned the raw document, so the driver arrived as a populated
@@ -1347,7 +1333,10 @@ export const serializeRideDetail = async (ride) => {
         phone: driver.phone || '',
         profileImage: driver.profileImage || '',
         rating: driver.rating || null,
-        totalTrips: await countDriverTrips(driver._id),
+        // A stored counter, not a count query: this serializer backs ride detail
+        // for every service type, and a per-request countDocuments here was a
+        // cost every normal ride paid for a student-ride feature.
+        totalTrips: Number(driver.completedRidesCount || 0),
         vehicleType: driver.vehicleType || '',
         vehicleNumber: driver.vehicleNumber || '',
         vehicleMake: driver.vehicleMake || '',
@@ -1372,7 +1361,7 @@ export const getRideDetails = async (rideId) => {
   const ride = await Ride.findById(rideId)
     .populate('deliveryId')
     .populate('userId', 'name phone')
-    .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating');
+    .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating completedRidesCount');
 
   if (!ride) {
     throw new ApiError(404, 'Ride not found');
@@ -1565,6 +1554,7 @@ export const serializeRideRealtime = (ride) => ({
     : null,
   user: ride.userId,
   driver: ride.driverId,
+  ...studentDriverBlock(ride),
   messages: (ride.messages || []).slice(-30).map((message) => ({
     id: String(message._id),
     senderRole: message.senderRole,

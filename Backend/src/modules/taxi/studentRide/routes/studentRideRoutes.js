@@ -87,3 +87,16 @@ studentRideRouter.get(
   publicTrackingRateLimit,
   asyncHandler(studentController.getPublicTracking),
 );
+
+/**
+ * Operator visibility — read-only.
+ *
+ * Authenticated here rather than relying on the admin router's prefix guard,
+ * so these stay protected regardless of router mount order. The literal
+ * /emergencies path is declared before /:studentRideId so it is not captured.
+ */
+const asAdmin = authenticate(['admin']);
+
+studentRideRouter.get('/admin/student-rides', asAdmin, asyncHandler(studentController.adminListStudentRides));
+studentRideRouter.get('/admin/student-rides/emergencies', asAdmin, asyncHandler(studentController.adminListEmergencies));
+studentRideRouter.get('/admin/student-rides/:studentRideId', asAdmin, asyncHandler(studentController.adminGetStudentRide));

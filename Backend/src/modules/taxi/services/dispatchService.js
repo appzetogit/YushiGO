@@ -17,6 +17,8 @@ import {
 } from '../constants/index.js';
 import { Delivery } from '../user/models/Delivery.js';
 import { getRideRoom, resolveSetPriceForRide } from './rideService.js';
+import { syncStudentRideWithDispatch } from '../studentRide/services/statusSyncService.js';
+import { studentDriverBlock } from '../studentRide/services/driverPayload.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
 import { resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
@@ -741,6 +743,7 @@ const buildRideRequestPayload = ({
       paymentMethod: ride.paymentMethod,
       parcel: ride.parcel || null,
       intercity: ride.intercity || null,
+      ...studentDriverBlock(ride),
       radius: effectiveRadius,
       attempt: attemptIndex + 1,
       maxAttempts: dispatchConfig.maxAttempts,
@@ -871,6 +874,11 @@ const closeRideAsUnmatched = async (rideId) => {
     return;
   }
 
+  // The worst case of the four: dispatch ran out of drivers and cancelled the
+  // ride, and without this the parent's app shows "finding a driver" forever.
+  // No-op for anything that is not a student ride.
+  await syncStudentRideWithDispatch(ride);
+
   if (ride.deliveryId) {
     await Delivery.findByIdAndUpdate(ride.deliveryId, {
       status: ride.status,
@@ -922,6 +930,7 @@ export const cancelRideByAdmin = async (rideId) => {
     ride.biddingStatus = 'cancelled';
   }
   await ride.save();
+  await syncStudentRideWithDispatch(ride);
 
   if (ride.deliveryId) {
     await Delivery.findByIdAndUpdate(ride.deliveryId, {
@@ -1044,6 +1053,8 @@ export const cancelRideByUser = async ({ rideId, userId, reasonCode = '', reason
     session.endSession();
   }
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
+  // After commit, so the companion never reflects a rolled-back cancellation.
+  await syncStudentRideWithDispatch(ride);
 
   const cancellationDetail = {
     cancelledBy: RIDE_CANCELLED_BY.USER,
@@ -1178,6 +1189,8 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
     session.endSession();
   }
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
+  // After commit, so the companion never reflects a rolled-back cancellation.
+  await syncStudentRideWithDispatch(ride);
 
   const cancelReason = 'Your scheduled ride was cancelled by the driver.';
 

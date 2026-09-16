@@ -193,6 +193,10 @@ export const incrementDriverTodaySummaryForCompletedRide = async ({ driverId, co
       $set: {
         todaySummary: nextSummary,
       },
+      // Same write, so the lifetime count can never drift from the daily one.
+      $inc: {
+        completedRidesCount: 1,
+      },
     },
   );
 };

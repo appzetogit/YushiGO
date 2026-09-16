@@ -118,6 +118,18 @@ const numberFromEnv = (key, fallback) => {
 export const studentRideConfig = () => ({
   otpLength: 4,
   otpExpirySeconds: numberFromEnv('STUDENT_RIDE_OTP_EXPIRY_SECONDS', 30 * 60),
+  /**
+   * How long a pickup code stays usable, counted from when the ride is due rather
+   * than from booking.
+   *
+   * The drop code lives thirty minutes because it is minted as the journey
+   * starts. The pickup code is minted at booking, so a thirty-minute life killed
+   * it long before a scheduled ride's driver arrived, and even an immediate ride
+   * waiting half an hour for a match reached the gate with a dead code. The code
+   * is only useful with the child physically present, which is what bounds the
+   * risk of a longer window.
+   */
+  pickupOtpExpirySeconds: numberFromEnv('STUDENT_RIDE_PICKUP_OTP_EXPIRY_SECONDS', 3 * 60 * 60),
   otpMaxAttempts: numberFromEnv('STUDENT_RIDE_OTP_MAX_ATTEMPTS', 5),
   shareTokenExpiryHours: numberFromEnv('STUDENT_RIDE_SHARE_TTL_HOURS', 12),
 });

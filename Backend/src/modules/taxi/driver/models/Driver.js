@@ -231,6 +231,20 @@ const driverSchema = new mongoose.Schema(
       min: 0,
       max: 5,
     },
+    /**
+     * Lifetime completed rides.
+     *
+     * The only counter here was todaySummary.rides, which resets daily, so ride
+     * detail had to count the rides collection on every read — for every ride
+     * type. This is incremented in the same write that updates todaySummary, so
+     * it costs nothing extra, and backfilled once by
+     * scripts/backfillDriverCompletedRides.js.
+     */
+    completedRidesCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     ratingCount: {
       type: Number,
       default: 0,

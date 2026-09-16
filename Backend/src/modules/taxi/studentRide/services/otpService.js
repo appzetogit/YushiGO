@@ -29,17 +29,24 @@ const generateOtp = (length) => Array.from(
  * The caller is responsible for delivering the plaintext and then discarding it;
  * it is never written to the ride document.
  */
-export const issueOtp = () => {
+export const issueOtp = ({ validFrom = null, lifetimeSeconds = null } = {}) => {
   const config = studentRideConfig();
   const otp = generateOtp(config.otpLength);
   const now = new Date();
+
+  // A code for a ride due later runs from when the ride is due, never from
+  // earlier than now — so a past or missing validFrom behaves as before.
+  const anchor = validFrom && new Date(validFrom).getTime() > now.getTime()
+    ? new Date(validFrom)
+    : now;
+  const lifetime = Number(lifetimeSeconds) > 0 ? Number(lifetimeSeconds) : config.otpExpirySeconds;
 
   return {
     otp,
     fields: {
       hash: hashOtp(otp),
       issuedAt: now,
-      expiresAt: new Date(now.getTime() + (config.otpExpirySeconds * 1000)),
+      expiresAt: new Date(anchor.getTime() + (lifetime * 1000)),
       verifiedAt: null,
       attempts: 0,
     },

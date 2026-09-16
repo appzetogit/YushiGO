@@ -2,6 +2,8 @@ import { StudentRide } from '../models/StudentRide.js';
 import { StudentRideEvent } from '../models/StudentRideEvent.js';
 import { STUDENT_RIDE_EVENTS, STUDENT_RIDE_STATUS } from '../constants/index.js';
 import { emitStudentRideStatus } from '../socket/emitters.js';
+import { issueOtp } from './otpService.js';
+import { applyLifecycleEffects } from './lifecycleEffects.js';
 
 /**
  * Carry the dispatch ride's lifecycle onto its StudentRide companion.
@@ -147,6 +149,38 @@ const step = async ({ studentRide, status }) => {
     studentRide.startedAt = new Date();
   }
 
+  /**
+   * Mint the drop code when the journey starts, as advanceStatus does.
+   *
+   * Without this every dispatch-driven trip crossed DROP_OTP_VERIFIED with no
+   * code in existence, so recordBypass fired on every ride and otpBypassed.drop
+   * stopped meaning anything. Guarded on issuedAt so a re-sync never rotates a
+   * code the parent is already holding.
+   *
+   * The plaintext is returned to the caller, not stored and not logged; it is
+   * delivered once the walk has been saved.
+   */
+  if (status === STUDENT_RIDE_STATUS.RIDE_STARTED && !studentRide.dropOtp?.issuedAt) {
+    const code = issueOtp();
+    studentRide.dropOtp = code.fields;
+
+    await appendEvent({
+      studentRide,
+      eventType: STUDENT_RIDE_EVENTS.RIDE_STARTED,
+      oldStatus: previous,
+      newStatus: status,
+      description: `Synced from the dispatch ride (${status}).`,
+    });
+
+    await appendEvent({
+      studentRide,
+      eventType: STUDENT_RIDE_EVENTS.DROP_OTP_ISSUED,
+      description: 'Drop OTP issued.',
+    });
+
+    return { dropOtp: code.otp };
+  }
+
   if (status === STUDENT_RIDE_STATUS.COMPLETED && !studentRide.completedAt) {
     studentRide.completedAt = new Date();
   }
@@ -168,6 +202,8 @@ const step = async ({ studentRide, status }) => {
       description: `Synced from the dispatch ride (${status}).`,
     });
   }
+
+  return {};
 };
 
 /**
@@ -183,6 +219,29 @@ const resolveSocketServer = async () => {
   } catch {
     return null;
   }
+};
+
+/**
+ * Hand the drop code to the parent who booked the ride.
+ *
+ * Sent to `user:<id>` rather than the student-ride room, because that room is
+ * also joined by anyone holding a forwarded share link — and a guardian watching
+ * a tracking page must never receive the code that authorises a drop-off.
+ *
+ * If the parent is offline the event is simply missed; the existing reissue
+ * endpoint allows RIDE_STARTED and NEAR_DESTINATION, so the code is always
+ * recoverable from the app.
+ */
+const deliverDropOtp = (io, studentRide, otp) => {
+  if (!io || !otp || !studentRide?.userId) {
+    return;
+  }
+
+  io.to(`user:${studentRide.userId}`).emit('student-ride:drop-otp', {
+    studentRideId: String(studentRide._id),
+    otp,
+    expiresAt: studentRide.dropOtp?.expiresAt || null,
+  });
 };
 
 export const syncStudentRideWithDispatch = async (ride) => {
@@ -214,6 +273,7 @@ export const syncStudentRideWithDispatch = async (ride) => {
       });
 
       emitStudentRideStatus(await resolveSocketServer(), studentRide);
+      applyLifecycleEffects({ studentRide, statuses: [STUDENT_RIDE_STATUS.CANCELLED] });
       return studentRide;
     }
 
@@ -232,12 +292,43 @@ export const syncStudentRideWithDispatch = async (ride) => {
       return studentRide;
     }
 
+    const crossed = [];
+    let dropOtp = null;
+
     for (let index = currentIndex + 1; index <= targetIndex; index += 1) {
-      await step({ studentRide, status: CHAIN[index] });
+      const outcome = await step({ studentRide, status: CHAIN[index] });
+
+      crossed.push({
+        status: CHAIN[index],
+        startedAt: studentRide.startedAt || null,
+        completedAt: studentRide.completedAt || null,
+      });
+
+      if (outcome?.dropOtp) {
+        dropOtp = outcome.dropOtp;
+      }
     }
 
+    // Saved before anything is announced, so no event describes state that
+    // might not have been committed.
     await studentRide.save();
-    emitStudentRideStatus(await resolveSocketServer(), studentRide);
+
+    const io = await resolveSocketServer();
+
+    /**
+     * One event per status crossed, in order.
+     *
+     * Emitting only the final status meant a driver verifying the OTP and
+     * starting the trip in the same moment took the ride straight past
+     * PICKUP_OTP_VERIFIED, and the parent's app never showed "boarded".
+     * student-ride:completed still fires exactly once, from the terminal status.
+     */
+    for (const snapshot of crossed) {
+      emitStudentRideStatus(io, { _id: studentRide._id, ...snapshot });
+    }
+
+    deliverDropOtp(io, studentRide, dropOtp);
+    applyLifecycleEffects({ studentRide, statuses: crossed.map((snapshot) => snapshot.status) });
 
     return studentRide;
   } catch (error) {

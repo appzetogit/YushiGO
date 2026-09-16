@@ -19,7 +19,7 @@ import { studentRideError } from './studentService.js';
  * created inside the caller's transaction so a failure further down cannot
  * leave a dispatch ride with no student ride attached to it.
  */
-export const createDispatchRide = async ({ userId, pickup, destination, scheduledAt, payload, quote, session }) => {
+export const createDispatchRide = async ({ userId, pickup, destination, scheduledAt, payload, quote, studentName = '', session }) => {
   const [ride] = await Ride.create([{
     userId,
     pickupLocation: { type: 'Point', coordinates: [pickup.longitude, pickup.latitude] },
@@ -35,6 +35,9 @@ export const createDispatchRide = async ({ userId, pickup, destination, schedule
     vehicleTypeId: quote.vehicleTypeId,
     paymentMethod: payload?.payment_method || payload?.paymentMethod || 'cash',
     serviceType: 'student',
+    studentSummary: {
+      displayName: String(studentName || '').trim().split(/\s+/)[0] || '',
+    },
     // transport_type keys the SetPrice lookup and driver matching, and a student
     // ride is carried by an ordinary taxi — a distinct value here would find no
     // pricing rows and no eligible drivers. serviceType is what marks it as a
@@ -88,4 +91,49 @@ export const assertDriverForRide = async ({ rideId, driverId, session }) => {
 export const cancelDispatchRide = async ({ rideId, userId }) => {
   const { cancelRideByUser } = await import('../../services/dispatchService.js');
   return cancelRideByUser({ rideId, userId, reasonCode: 'changed_plans' });
+};
+
+/**
+ * Whether booking dispatches immediately. On unless explicitly switched off.
+ *
+ * Read at call time rather than at import, so setting
+ * STUDENT_RIDE_DIRECT_DISPATCH=false and restarting with --update-env takes
+ * effect without a code deploy. Off means the recovery sweep alone picks the ride
+ * up, exactly as before this change.
+ */
+export const isDirectDispatchEnabled = () =>
+  String(process.env.STUDENT_RIDE_DIRECT_DISPATCH ?? 'true').toLowerCase() !== 'false';
+
+/**
+ * Offer a newly booked student ride to drivers now, rather than on the next
+ * recovery sweep.
+ *
+ * Every other service calls startDispatchFlow at booking; student rides did not,
+ * so no driver saw the offer for up to thirty seconds. Called after the booking
+ * has committed and the documents are linked — dispatch emits sockets and must
+ * not run against uncommitted state.
+ *
+ * Never throws. The booking has already succeeded, and the sweep remains the
+ * backstop, so a dispatch failure here is logged rather than turned into a
+ * failed 201.
+ */
+export const startStudentRideDispatch = async (rideId) => {
+  if (!isDirectDispatchEnabled() || !rideId) {
+    return false;
+  }
+
+  try {
+    const ride = await Ride.findById(rideId);
+
+    if (!ride) {
+      return false;
+    }
+
+    const { startDispatchFlow } = await import('../../services/dispatchService.js');
+    await startDispatchFlow(ride);
+    return true;
+  } catch (error) {
+    console.error('[student-ride] direct dispatch failed; recovery sweep will retry', error?.message || error);
+    return false;
+  }
 };
