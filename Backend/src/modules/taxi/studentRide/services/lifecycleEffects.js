@@ -91,7 +91,15 @@ const run = async ({ studentRide, statuses }) => {
     });
   }
 
-  if (statuses.includes('RIDE_STARTED')) {
+  const finished = statuses.some((status) => TERMINAL.includes(status));
+
+  /**
+   * Only for a journey still in progress. One sync can walk past RIDE_STARTED
+   * and on to COMPLETED in a single call; by then the ride is over, a tracking
+   * link would open onto nothing, and texting it to a guardian is noise. This
+   * used to try anyway and log a refusal on an entirely legitimate path.
+   */
+  if (statuses.includes('RIDE_STARTED') && !finished) {
     await shareWithGuardians({ studentRide, student }).catch((error) => {
       console.error('[student-ride] guardian tracking link failed', error?.message || error);
     });
@@ -100,7 +108,7 @@ const run = async ({ studentRide, statuses }) => {
   // A finished ride's share links are closed outright. resolveToken already
   // refuses a finished ride, so this is not closing a leak — it stops tokens
   // outliving the journey they were issued for.
-  if (statuses.some((status) => TERMINAL.includes(status))) {
+  if (finished) {
     const { revokeAllShareLinks } = await import('./shareService.js');
     await revokeAllShareLinks({ studentRideId: studentRide._id });
   }
