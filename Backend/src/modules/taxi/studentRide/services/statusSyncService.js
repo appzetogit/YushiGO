@@ -151,7 +151,15 @@ const step = async ({ studentRide, status }) => {
     studentRide.completedAt = new Date();
   }
 
-  if (!isOtpGate || !alreadyVerified) {
+  /**
+   * An OTP gate never writes a VERIFIED event from here.
+   *
+   * If the code was genuinely checked, verifyRideOtp already wrote one. If it
+   * was not, recordBypass above wrote the bypass — and adding a VERIFIED event
+   * beside it would put the exact false claim into the timeline that this whole
+   * path exists to keep out.
+   */
+  if (!isOtpGate) {
     await appendEvent({
       studentRide,
       eventType: EVENT_FOR_STATUS[status] || STUDENT_RIDE_EVENTS.RIDE_STARTED,
