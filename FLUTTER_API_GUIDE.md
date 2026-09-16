@@ -816,6 +816,51 @@ socket.on('student-ride:completed', (_) => stopTracking());
 
 On `student-ride:completed` the server also removes you from the room. Stop your timers.
 
+### Status now follows the driver
+
+A student ride is two records: the `StudentRide` you read, and the dispatch ride the driver app
+actually drives. The driver's progress is carried onto the student ride server-side, so
+`GET /student-ride/rides/:id` returns a `status` that moves on its own as the trip proceeds.
+
+**No app change is needed for this.** If you were seeing `BOOKED` for the whole journey, that was a
+backend gap and it is fixed — retest before building any workaround. In particular, don't merge the
+dispatch ride's status into the student status on the client; the server owns that mapping now.
+
+| Driver does | Dispatch `liveStatus` | Student `status` |
+|---|---|---|
+| Accepts the job | `accepted` | `DRIVER_ASSIGNED` |
+| Reports arrival at pickup | `arriving` | `DRIVER_ARRIVED` |
+| Starts the trip | `started` | `RIDE_STARTED` |
+| Reaches the destination | `arrived` | `NEAR_DESTINATION` |
+| Completes | `completed` | `COMPLETED` |
+| Cancels | `cancelled` | `CANCELLED` |
+
+The sync walks the chain rather than jumping, so the timeline still shows every step even when the
+driver's app skips ahead. It never runs backwards, so a late or stale update cannot un-complete a
+finished ride.
+
+`student-ride:status:updated` now fires on every one of these. Previously the event existed but was
+never emitted, so only the poll worked — you can now rely on the socket and treat the poll as a
+fallback.
+
+### When a pickup happens without the OTP
+
+The driver app can start and complete a trip through the ride engine without ever calling the
+student-ride OTP endpoints. When that happens the status still advances — otherwise the parent would
+sit on "finding driver" for the whole journey — but **nothing pretends the code was checked**:
+
+```json
+"pickupOtp": { "issued": true, "verified": false, ... },
+"otpBypassed": { "pickup": true, "drop": false }
+```
+
+`otpBypassed.pickup` means the student was collected without the pickup code being verified. Show it.
+A parent who chose a service with an OTP gate is entitled to know when the gate was not used, and the
+ride timeline carries a matching `PICKUP_OTP_BYPASSED` entry with the time.
+
+If the driver app does call the OTP endpoints, `verified` is `true`, the bypass flag stays `false`,
+and the timeline records `PICKUP_OTP_VERIFIED` instead.
+
 ### Trip sharing
 
 | Method | Path | Auth |
@@ -1456,6 +1501,10 @@ Skip these in Flutter unless you're building an admin app. If you do, the list i
   local state machine; a skipped step returns `409 INVALID_RIDE_STATUS`.
 - **A share link dies when the ride completes**, even though its `expiresAt` is still in the future.
   Expect the public page to stop returning data on arrival.
+- **Student ride `status` moves on its own now.** Don't merge the dispatch ride's status into it
+  client-side — the server owns that mapping, and doing both will fight.
+- **`otpBypassed` means the safety gate was skipped, not that something failed.** Surface it;
+  don't treat it as an error state.
 - **Women-only carpool rides are invisible, not filtered.** They never appear in search for
   someone who cannot book them, so an empty result set is a legitimate outcome, and there is nothing
   client-side to filter.
