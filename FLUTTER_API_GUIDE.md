@@ -382,7 +382,7 @@ means at the destination (after `started`), `arriving` means the driver is en ro
 | POST | `/rides` | user | create ride (see body below) |
 | GET | `/rides` | user, driver | history — `?limit=&page=&category=` → `{ results, total, pagination }` |
 | GET | `/rides/active/me` | user, driver | current ride, `data: null` when idle |
-| GET | `/rides/:rideId` | participant | full detail |
+| GET | `/rides/:rideId` | participant | full detail — `driver` and `vehicle` objects, see below |
 | GET | `/rides/cancellation-reasons` | user | pick-list for the cancel sheet → `{ reasons: [{ code, label }] }` |
 | PATCH | `/rides/:rideId/cancel` | user | `{ reasonCode?, reasonNote? }` — see §Cancellation reasons |
 | PATCH | `/rides/:rideId/status` | driver | `{ status, paymentMethod? }` |
@@ -451,6 +451,36 @@ ceiling with `/bids/ceiling` and dispatch restarts at the new fare.
 
 Coordinates accept `{lat, lng}` or `[lng, lat]` — send `{lat, lng}`, it's harder to get wrong.
 Everything the server returns as GeoJSON is `[lng, lat]`. **Do not mix these up.**
+
+### Driver and vehicle on a ride
+
+`GET /rides/:rideId` returns `driver` and `vehicle` as objects, using the same field names the
+socket payload uses:
+
+```json
+{ "driver": { "_id": "...", "name": "Rakesh Kumar", "phone": "9998887777",
+              "profileImage": "...", "rating": 4.8, "totalTrips": 152,
+              "vehicleNumber": "MP09AB1234", "vehicleMake": "Maruti",
+              "vehicleModel": "Swift", "vehicleColor": "White", "vehicleType": "car" },
+  "vehicle": { "plateNumber": "MP09AB1234", "model": "Maruti Swift",
+               "color": "White", "type": "car", "imageUrl": "" },
+  "lastDriverLocation": { "type": "Point", "coordinates": [75.85, 22.71] },
+  "driverId": { ... } }
+```
+
+**`driver` is `null` while unassigned**, not an empty object — branch on presence, not on
+`driver.name` being blank.
+
+This used to return the raw document, so there was no `driver` key at all and the driver arrived as
+a populated `driverId` instead. If your screens show a moving map marker but blank name, plate and
+rating, that was the cause — `lastDriverLocation` is a real field and survived the mismatch while
+every text field came back undefined. **Retest before working around it.**
+
+`driverId` is still present and unchanged, so nothing reading the old shape breaks while you
+migrate. `totalTrips` is new; it was never returned before, which is why every driver showed 0 rides.
+
+Only `GET /rides/:rideId` has this shape today. `GET /rides/active/me` and the other ride-returning
+endpoints still return the raw document — ask if you need one of those converted.
 
 ### 5.3 Socket contract — rider side
 
@@ -809,12 +839,20 @@ Socket.IO, same connection as the rest of the app:
 
 ```dart
 socket.emit('student-ride:join', {'studentRideId': id});
-socket.on('student-ride:location:updated', (d) => moveCar(d['latitude'], d['longitude']));
 socket.on('student-ride:status:updated', (d) => setStatus(d['status']));
 socket.on('student-ride:completed', (_) => stopTracking());
+
+// Driver position arrives on the ride event, not a student-ride one:
+socket.on('ride:driver-location:updated', (d) => moveCar(d));
 ```
 
-On `student-ride:completed` the server also removes you from the room. Stop your timers.
+**There is no `student-ride:location:updated`.** Joining a student ride also subscribes you to the
+underlying dispatch ride's room, so the driver's position arrives on the existing
+`ride:driver-location:updated` event. The `student-ride:joined` acknowledgement includes the
+`rideId` if you need to correlate. An earlier build defined a student-specific location event that
+was never emitted; it has been removed rather than left as a dead contract.
+
+On `student-ride:completed` the server also removes you from both rooms. Stop your timers.
 
 ### Status now follows the driver
 
@@ -860,6 +898,27 @@ ride timeline carries a matching `PICKUP_OTP_BYPASSED` entry with the time.
 
 If the driver app does call the OTP endpoints, `verified` is `true`, the bypass flag stays `false`,
 and the timeline records `PICKUP_OTP_VERIFIED` instead.
+
+### One call, not two
+
+`GET /student-ride/rides/:id` now carries the driver, vehicle and fare alongside the safety
+lifecycle, so you do not need to fetch the dispatch ride separately and merge:
+
+```json
+{ "studentRideId": "...", "status": "RIDE_STARTED",
+  "dispatch": { "status": "ongoing", "liveStatus": "started" },
+  "driver": { "id": "...", "name": "Rakesh Kumar", "phone": "9998887777",
+              "photoUrl": "...", "rating": 4.8, "totalTrips": 152 },
+  "vehicle": { "plateNumber": "MP09AB1234", "model": "Maruti Swift",
+               "color": "White", "type": "car", "imageUrl": "" },
+  "fare": 129.78, "paymentMethod": "cash",
+  "estimatedDurationMinutes": 18, "estimatedDistanceMeters": 10000,
+  "lastDriverLocation": { "latitude": 22.71, "longitude": 75.85 } }
+```
+
+`driver` and `vehicle` are `null` until a driver is assigned. Every field the endpoint returned
+before is unchanged, so this is safe to adopt gradually. `GET /student-ride/rides` carries the same
+summary per row, so an upcoming-rides list can show the driver without a second call.
 
 ### Trip sharing
 
@@ -1505,6 +1564,10 @@ Skip these in Flutter unless you're building an admin app. If you do, the list i
   client-side — the server owns that mapping, and doing both will fight.
 - **`otpBypassed` means the safety gate was skipped, not that something failed.** Surface it;
   don't treat it as an error state.
+- **`driver` is `null`, never `{}`, when unassigned** — on both `/rides/:rideId` and the student
+  ride payload. Branch on presence.
+- **Don't fetch the dispatch ride to fill in driver details on a student ride.** The student
+  payload carries them now; two polls per active ride was the old workaround.
 - **Women-only carpool rides are invisible, not filtered.** They never appear in search for
   someone who cannot book them, so an empty result set is a legitimate outcome, and there is nothing
   client-side to filter.
