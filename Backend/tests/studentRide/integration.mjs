@@ -29,6 +29,10 @@ const { StudentRideEvent } = await import('../../src/modules/taxi/studentRide/mo
 const { Ride } = await import('../../src/modules/taxi/user/models/Ride.js');
 await import('../../src/modules/taxi/user/models/User.js');
 await import('../../src/modules/taxi/driver/models/Driver.js');
+// Loaded lazily by lifecycleEffects in the app; registered here so the
+// collection setup below can reference them.
+await import('../../src/modules/taxi/studentRide/models/StudentRideShareToken.js');
+await import('../../src/modules/taxi/studentRide/models/StudentRideEmergency.js');
 
 await mongoose.connect(process.env.MONGODB_URI, { autoIndex: false });
 
