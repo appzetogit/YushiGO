@@ -114,6 +114,17 @@ export const serializeStudentRide = (ride, { student = null, timeline = null } =
   // State only — never the codes themselves (§42).
   pickupOtp: serializeOtpState(ride.pickupOtp),
   dropOtp: serializeOtpState(ride.dropOtp),
+  /**
+   * True where the ride passed a verification point without one happening.
+   *
+   * Surfaced rather than left in the database: a parent is entitled to know
+   * their child was collected without the pickup code being checked, and
+   * burying that would defeat the point of recording it.
+   */
+  otpBypassed: {
+    pickup: Boolean(ride.otpBypassed?.pickup),
+    drop: Boolean(ride.otpBypassed?.drop),
+  },
   startedAt: ride.startedAt,
   completedAt: ride.completedAt,
   cancelledAt: ride.cancelledAt,
