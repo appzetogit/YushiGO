@@ -56,6 +56,11 @@ export const carpoolConfig = () => ({
   // Cash between users for now. The settlement seam in carpoolSettlement.js is
   // where a wallet or gateway model attaches.
   instantBooking: String(process.env.CARPOOL_INSTANT_BOOKING || '').toLowerCase() === 'true',
+  // How long after departure a ride that never started is still a ride. A host
+  // leaving at 09:00 must still be able to press Start at 09:12.
+  expiryGraceMinutes: numberFromEnv('CARPOOL_EXPIRY_GRACE_MINUTES', 120),
+  expirySweepEnabled: String(process.env.CARPOOL_EXPIRY_SWEEP_ENABLED ?? 'true').toLowerCase() !== 'false',
+  expirySweepIntervalMinutes: numberFromEnv('CARPOOL_EXPIRY_SWEEP_INTERVAL_MINUTES', 5),
 });
 
 export const CARPOOL_ERRORS = Object.freeze({
@@ -79,4 +84,5 @@ export const CARPOOL_ERRORS = Object.freeze({
   WOMEN_ONLY_RESTRICTED: 'WOMEN_ONLY_RESTRICTED',
   RATING_NOT_ALLOWED: 'RATING_NOT_ALLOWED',
   DUPLICATE_RATING: 'DUPLICATE_RATING',
+  RIDE_EXPIRED: 'RIDE_EXPIRED',
 });

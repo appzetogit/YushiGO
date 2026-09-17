@@ -38,6 +38,16 @@ const EVENTS = {
     title: 'Ride started',
     body: () => 'Your carpool ride has started.',
   },
+  CARPOOL_REQUEST_EXPIRED: {
+    to: 'passenger',
+    title: 'Request expired',
+    body: () => 'The ride departed before the host answered your seat request.',
+  },
+  CARPOOL_RIDE_EXPIRED: {
+    to: 'passenger',
+    title: 'Ride did not start',
+    body: () => 'The host did not start this carpool ride, so your booking was cancelled.',
+  },
   CARPOOL_RIDE_COMPLETED: {
     to: 'passenger',
     title: 'Ride completed',

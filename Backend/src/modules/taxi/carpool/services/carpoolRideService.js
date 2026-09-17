@@ -19,6 +19,8 @@ import {
   rankMatches,
 } from './routeMatching.js';
 import { getStatsForUsers } from './carpoolRatingService.js';
+import { todayInZone, zonedWallClockToUtc } from './departureTime.js';
+import { expireRide, isPastExpiry } from './carpoolExpiryService.js';
 
 /**
  * Whether an account may take part in a women-only ride.
@@ -72,11 +74,12 @@ const parsePlace = (value, field) => {
 };
 
 /**
- * Combine the host's date and time into a UTC instant.
+ * Combine the host's date and time into the instant it names.
  *
- * The pair is also stored verbatim for display: recomputing local wall-clock
- * time from an instant would show a different departure to a passenger in
- * another timezone than the host typed.
+ * Read in the market timezone: the host typed local wall-clock time. The pair is
+ * also stored verbatim for display: recomputing local wall-clock time from an
+ * instant would show a different departure to a passenger in another timezone
+ * than the host typed.
  */
 const parseDeparture = ({ date, departureTime }) => {
   const rawDate = String(date || '').trim();
@@ -90,14 +93,18 @@ const parseDeparture = ({ date, departureTime }) => {
     throw carpoolError(422, CARPOOL_ERRORS.INVALID_ROUTE, 'departure_time must be formatted HH:mm.');
   }
 
-  const departureAt = new Date(`${rawDate}T${rawTime}:00.000Z`);
+  const departureAt = zonedWallClockToUtc(rawDate, rawTime);
 
-  if (Number.isNaN(departureAt.getTime())) {
+  if (!departureAt) {
     throw carpoolError(422, CARPOOL_ERRORS.INVALID_ROUTE, 'date and departure_time do not form a valid time.');
   }
 
   if (departureAt.getTime() <= Date.now()) {
-    throw carpoolError(422, CARPOOL_ERRORS.INVALID_ROUTE, 'Departure must be in the future.');
+    throw carpoolError(
+      422,
+      CARPOOL_ERRORS.INVALID_ROUTE,
+      rawDate === todayInZone() ? 'That time has already passed today.' : 'Departure must be in the future.',
+    );
   }
 
   return { departureAt, date: rawDate, departureTime: rawTime };
@@ -152,6 +159,7 @@ export const serializeRideForOwner = (ride, { vehicle } = {}) => ({
   date: ride.date,
   departureTime: ride.departureTime,
   departureAt: ride.departureAt,
+  expiresAt: ride.expiresAt,
   estimatedArrivalTime: ride.estimatedArrivalTime || '',
   offeredSeats: ride.offeredSeats,
   bookedSeats: ride.bookedSeats,
@@ -164,6 +172,7 @@ export const serializeRideForOwner = (ride, { vehicle } = {}) => ({
   startedAt: ride.startedAt,
   completedAt: ride.completedAt,
   cancelledAt: ride.cancelledAt,
+  expiredAt: ride.expiredAt || null,
   createdAt: ride.createdAt,
 });
 
@@ -185,6 +194,7 @@ export const serializeRidePublic = (ride, { match = null, hostStats = null } = {
   date: ride.date,
   departureTime: ride.departureTime,
   departureAt: ride.departureAt,
+  expiresAt: ride.expiresAt,
   vehicle: ride.vehicleId && typeof ride.vehicleId === 'object' ? serializeVehiclePublic(ride.vehicleId) : null,
   availableSeats: Math.max(0, ride.offeredSeats - ride.bookedSeats),
   pricePerSeat: ride.pricePerSeat,
@@ -260,6 +270,7 @@ export const createRide = async ({ userId, payload }) => {
     stops,
     routePath: { type: 'LineString', coordinates: routeCoordinates },
     departureAt,
+    expiresAt: new Date(departureAt.getTime() + config.expiryGraceMinutes * 60_000),
     date,
     departureTime,
     estimatedArrivalTime: String(payload?.estimated_arrival_time || payload?.estimatedArrivalTime || '').trim(),
@@ -287,12 +298,21 @@ export const getRideById = async ({ rideId, userId }) => {
     throw carpoolError(404, CARPOOL_ERRORS.RIDE_NOT_FOUND, 'Ride not found.');
   }
 
-  const ride = await CarpoolRide.findById(rideId)
+  const loadRide = () => CarpoolRide.findById(rideId)
     .populate('driverId', 'name profileImage phoneVerified profileVerified')
     .populate('vehicleId');
 
+  let ride = await loadRide();
+
   if (!ride) {
     throw carpoolError(404, CARPOOL_ERRORS.RIDE_NOT_FOUND, 'Ride not found.');
+  }
+
+  // Safety net for the gap before the next sweep, or for an environment where
+  // the sweep is not running: an old link must never read as bookable.
+  if (isPastExpiry(ride)) {
+    await expireRide(ride._id);
+    ride = await loadRide();
   }
 
   // The host sees their own ride in full; everyone else sees the public view.

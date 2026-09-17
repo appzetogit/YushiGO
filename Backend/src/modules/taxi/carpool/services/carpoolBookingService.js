@@ -12,6 +12,7 @@ import { assertWomenOnlyEligible, requireOwnedRide } from './carpoolRideService.
 import * as settlement from './carpoolSettlement.js';
 import { notifyCarpool } from './carpoolNotifications.js';
 import { runInTransaction } from './transaction.js';
+import { expireRide, isPastExpiry } from './carpoolExpiryService.js';
 import { recordCompletedTrips } from './carpoolRatingService.js';
 import { emitCarpoolRideStatus } from '../socket/carpoolSocketHandler.js';
 import { getSocketServer } from '../../services/dispatchService.js';
@@ -550,10 +551,28 @@ export const startRide = async ({ rideId, userId }) => {
   const notifications = [];
   let startedRide = null;
 
+  /**
+   * A ride whose window has closed is not a ride any more. Without this, a host
+   * could open a five-day-old offer and start it.
+   *
+   * Expired in its own transaction before refusing: doing it inside the start
+   * transaction and then throwing would roll the expiry back with the start.
+   */
+  const current = await requireOwnedRide({ rideId, userId });
+
+  if (isPastExpiry(current)) {
+    await expireRide(current._id);
+    throw carpoolError(409, CARPOOL_ERRORS.RIDE_EXPIRED, 'This ride has expired and can no longer be started.');
+  }
+
   const result = await runInTransaction(async (session) => {
     notifications.length = 0;
 
     const ride = await requireOwnedRide({ rideId, userId }, { session });
+
+    if (ride.status === CARPOOL_RIDE_STATUS.EXPIRED || isPastExpiry(ride)) {
+      throw carpoolError(409, CARPOOL_ERRORS.RIDE_EXPIRED, 'This ride has expired and can no longer be started.');
+    }
 
     if (![CARPOOL_RIDE_STATUS.PUBLISHED, CARPOOL_RIDE_STATUS.FULL].includes(ride.status)) {
       throw carpoolError(

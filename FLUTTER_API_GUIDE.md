@@ -1115,6 +1115,32 @@ away from her own category, so **prompt for gender in the profile before she rea
 and route the `403` to the profile rather than showing a bare error. The message names the cause.
 Gender is set through `PATCH /users/me` — see §8.
 
+**Departure time and expiry.** Send `date` and `departure_time` exactly as the host typed them, in
+local time — **no offset, no `Z`**. The server reads them in the market timezone (IST) and returns:
+
+| Field | Meaning |
+|---|---|
+| `date`, `departureTime` | what the host typed — **display these** |
+| `departureAt` | the real UTC instant it leaves |
+| `expiresAt` | `departureAt` + 2 h grace; after this an unstarted ride is dead |
+| `expiredAt` | set once the ride has expired, otherwise `null` |
+
+A `PUBLISHED`/`FULL` ride that is not started by `expiresAt` becomes **`EXPIRED`** — a terminal
+status, like `CANCELLED`. The server does it on its own, within a few minutes, and immediately if
+anyone opens the ride. When it happens, pending requests become `REJECTED` and accepted bookings
+become `CANCELLED` (`cancelledBy: "system"`), each with a `cancellationReason`; passengers get a push
+(`CARPOOL_REQUEST_EXPIRED` / `CARPOOL_RIDE_EXPIRED`) and the ride room gets `carpool:status:updated`.
+
+| Situation | Response |
+|---|---|
+| Publishing a time already gone today | `422 INVALID_ROUTE` — "That time has already passed today." |
+| Booking after `departureAt` | `409 RIDE_NOT_AVAILABLE` — "This ride has already departed." |
+| Starting after `expiresAt`, or an `EXPIRED` ride | `409 RIDE_EXPIRED` |
+
+So on ride detail: **hide Book Seat once `departureAt` has passed**, and **hide Start once `status` is
+`EXPIRED` or `expiresAt` has passed**. Between the two the host can still start — someone leaving at
+09:00 can press Start at 09:12. In `/carpool/my-trips`, `EXPIRED` rides land in `status=cancelled`.
+
 **Search** takes coordinates, not place names:
 
 ```
@@ -1574,6 +1600,10 @@ Skip these in Flutter unless you're building an admin app. If you do, the list i
 - **A woman with no `gender` on her profile cannot use women-only rides** — not publish, not book.
   Prompt for it in the profile long before she reaches the carpool tab.
 - **Carpool has no payment.** `NOT_REQUIRED` everywhere until the model is confirmed.
+- **Never convert the carpool date/time to UTC before sending it.** The server does it; converting
+  in the app as well moves every ride by 5½ hours.
+- **`EXPIRED` is a carpool ride status the app must handle.** Unfiltered `my-offered-rides` and
+  `my-bookings` return it; bucket it with cancelled, not upcoming.
 
 ## 24. Gotchas that will bite you
 

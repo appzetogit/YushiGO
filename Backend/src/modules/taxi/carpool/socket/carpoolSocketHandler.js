@@ -134,5 +134,6 @@ export const emitCarpoolRideStatus = (io, ride) => {
     status: ride.status,
     startedAt: ride.startedAt || null,
     completedAt: ride.completedAt || null,
+    expiredAt: ride.expiredAt || null,
   });
 };

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { CARPOOL_RIDE_STATUS } from '../constants/index.js';
+import { CARPOOL_RIDE_STATUS, carpoolConfig } from '../constants/index.js';
 
 const carpoolStopSchema = new mongoose.Schema(
   {
@@ -65,6 +65,13 @@ const carpoolRideSchema = new mongoose.Schema(
     // Departure is stored as a single UTC instant. `date` and `departureTime`
     // are kept as the host entered them, for display and for date-only filters.
     departureAt: { type: Date, required: true, index: true },
+    /**
+     * When a ride that never started stops being a ride.
+     *
+     * Derived from departureAt on write rather than computed on read, so the sweep
+     * and the query filters can both use a plain indexed comparison.
+     */
+    expiresAt: { type: Date, required: true, index: true },
     date: { type: String, required: true, trim: true },
     departureTime: { type: String, required: true, trim: true },
     estimatedArrivalTime: { type: String, default: '', trim: true },
@@ -103,6 +110,7 @@ const carpoolRideSchema = new mongoose.Schema(
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
     cancelledAt: { type: Date, default: null },
+    expiredAt: { type: Date, default: null },
     cancellationReason: { type: String, default: '', trim: true, maxlength: 500 },
   },
   { timestamps: true },
@@ -112,7 +120,21 @@ carpoolRideSchema.virtual('availableSeats').get(function availableSeats() {
   return Math.max(0, this.offeredSeats - this.bookedSeats);
 });
 
+/**
+ * Keep expiresAt in step with departureAt on every save.
+ *
+ * createRide sets it explicitly; this covers any document written before the
+ * field existed, so saving such a ride (a seat reservation, say) cannot fail
+ * validation in the window between deploy and the backfill.
+ */
+carpoolRideSchema.pre('validate', function deriveExpiresAt() {
+  if (this.departureAt && (!this.expiresAt || this.isModified('departureAt'))) {
+    this.expiresAt = new Date(this.departureAt.getTime() + carpoolConfig().expiryGraceMinutes * 60_000);
+  }
+});
+
 carpoolRideSchema.index({ status: 1, departureAt: 1 });
+carpoolRideSchema.index({ status: 1, expiresAt: 1 });
 carpoolRideSchema.index({ driverId: 1, status: 1, departureAt: -1 });
 carpoolRideSchema.index({ routePath: '2dsphere' });
 
