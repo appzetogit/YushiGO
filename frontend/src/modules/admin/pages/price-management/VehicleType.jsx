@@ -182,6 +182,9 @@ const buildVehicleFormData = (selectedVehicle = {}) => ({
     max_weight_kg: selectedVehicle.parcel_limits?.max_weight_kg ?? '',
     max_size: selectedVehicle.parcel_limits?.max_size || '',
   },
+  allowed_for_student_ride: selectedVehicle.allowed_for_student_ride === true
+    ? 'true'
+    : selectedVehicle.allowed_for_student_ride === false ? 'false' : '',
   service_tax: String(selectedVehicle.service_tax ?? 0),
   admin_commission_type_from_driver: String(selectedVehicle.admin_commission_type_from_driver ?? 1),
   admin_commission_from_driver: String(selectedVehicle.admin_commission_from_driver ?? 0),
@@ -235,6 +238,7 @@ const defaultFormData = {
     max_weight_kg: '',
     max_size: '',
   },
+  allowed_for_student_ride: '',
   service_tax: '0',
   admin_commission_type_from_driver: '1',
   admin_commission_from_driver: '0',
@@ -603,6 +607,10 @@ const VehicleType = ({ mode: propMode }) => {
         is_taxi: normalizeTaxiMode(formData.is_taxi || formData.transport_type),
         is_accept_share_ride: Number(formData.is_accept_share_ride || 0),
         delivery_category: showsDeliveryCategorySelector ? formData.delivery_category : '',
+        // '' = decide by type (two-wheelers never carry a student).
+        allowed_for_student_ride: formData.allowed_for_student_ride === 'true'
+          ? true
+          : formData.allowed_for_student_ride === 'false' ? false : null,
         // Blank means no limit: the vehicle accepts any parcel, as before.
         parcel_limits: showsDeliveryCategorySelector
           ? {
@@ -972,6 +980,22 @@ const VehicleType = ({ mode: propMode }) => {
               </p>
             </div>
           ) : null}
+
+          <div className="lg:col-span-2 rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
+            <label className={labelClass}>Student Rides</label>
+            <p className="mb-3 text-xs text-slate-500">
+              Whether parents can book this vehicle type for a student ride. Two-wheelers are never allowed on the default setting.
+            </p>
+            <select
+              value={formData.allowed_for_student_ride ?? ''}
+              onChange={(e) => updateForm('allowed_for_student_ride', e.target.value)}
+              className={`${inputClass} max-w-md`}
+            >
+              <option value="">Default (allowed, except bikes and scooters)</option>
+              <option value="true">Allowed</option>
+              <option value="false">Not allowed</option>
+            </select>
+          </div>
 
           {showsDeliveryCategorySelector ? (
             <div className="lg:col-span-2 rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">

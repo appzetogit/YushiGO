@@ -886,6 +886,14 @@ const AdminLayout = () => {
           },
           {
             icon: Share2,
+            label: 'Verifications',
+            subItems: [
+              { label: 'Student Verification', path: '/admin/verification/students' },
+              { label: 'Carpool Documents', path: '/admin/verification/carpool-documents' },
+            ],
+          },
+          {
+            icon: Share2,
             label: 'Car Pooling',
             subItems: [
               { label: 'Pending Pooling Drivers', path: '/admin/pooling/pending-drivers', permission: 'pooling.view' },

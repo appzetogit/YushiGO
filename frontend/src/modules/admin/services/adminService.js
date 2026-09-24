@@ -272,6 +272,16 @@ export const adminService = {
   updatePoolingRoute: (id, data) => api.patch(`/admin/pooling-routes/${id}`, data),
   deletePoolingRoute: (id) => api.delete(`/admin/pooling-routes/${id}`),
 
+  // Student verification — the student-ride booking gate.
+  getStudentsForVerification: (params = {}) => api.get('/admin/students', { params }),
+  approveStudent: (id) => api.post(`/admin/students/${id}/approve`),
+  rejectStudent: (id, reason) => api.post(`/admin/students/${id}/reject`, { reason }),
+
+  // Carpool host documents — the Offer Ride gate.
+  getCarpoolDocuments: (params = {}) => api.get('/admin/carpool/documents', { params }),
+  approveCarpoolDocument: (id) => api.post(`/admin/carpool/documents/${id}/approve`),
+  rejectCarpoolDocument: (id, reason) => api.post(`/admin/carpool/documents/${id}/reject`, { reason }),
+
   getPoolingVehicles: () => api.get('/admin/pooling-vehicles'),
   getPendingPoolingVehicles: (search = '') =>
     api.get('/admin/pooling-vehicles', { params: { approve: false, search } }),
