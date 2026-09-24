@@ -955,6 +955,77 @@ only, and is disconnected when the ride ends.
 **Send it even without a GPS fix** — coordinates are optional and an alert with none is still
 accepted. Only valid between `DRIVER_ARRIVING` and `NEAR_DESTINATION`.
 
+### 8c. Student verification, Aadhaar, siblings, vehicles
+
+**Every student is reviewed by an admin before they can ride.**
+
+| `verificationStatus` | Parent can | Show |
+|---|---|---|
+| `PENDING` | view and edit the profile only | "Waiting for verification" |
+| `VERIFIED` | everything | normal |
+| `REJECTED` | view and edit; `rejectionReason` says why | the reason + "Edit and resubmit" |
+
+Until `VERIFIED`, quote, booking and **adding or editing saved locations** return
+`403 STUDENT_NOT_VERIFIED` with a message you can show as-is. Students that existed before this
+change were approved automatically. The parent gets a push when an admin decides
+(`data.type` = `student_verified` / `student_rejected`) — refresh the student then.
+
+**Changing name, date of birth, Aadhaar or school ID sends a verified student back to `PENDING`.**
+School, class, photo and phone do not. Warn the parent before saving those fields.
+
+New fields on create / PATCH (all optional):
+
+```json
+{ "aadhaarNumber": "2341 2341 2346", "studentIdNumber": "STP-1042",
+  "studentIdPhotoUrl": "https://…" }
+```
+
+Upload the school ID image first (the same image upload the profile uses), then send the URL.
+The Aadhaar number is checked (12 digits, checksum — `422 INVALID_AADHAAR`) and stored encrypted.
+It is **never returned**; responses carry:
+
+```json
+"aadhaar": { "provided": true, "last4": "2346", "masked": "XXXX XXXX 2346",
+             "verified": false, "verifiedAt": null },
+"verificationStatus": "PENDING", "verifiedAt": null, "rejectionReason": "",
+"ageCategory": "child"
+```
+
+**Aadhaar OTP** (only once a KYC provider is set up — until then both return
+`503 AADHAAR_PROVIDER_NOT_CONFIGURED`; hide the button and let the admin verify manually):
+
+| POST | Body |
+|---|---|
+| `/student-ride/students/aadhar/initiate` | `{ "student_id": "…", "aadhaar_number": "…" }` → `{ otpSent, last4 }`; OTP goes to the Aadhaar-linked mobile |
+| `/student-ride/students/aadhar/verify` | `{ "student_id": "…", "otp": "123456" }` → the updated student |
+
+On success the **date of birth is replaced by the one on Aadhaar** and locked: a PATCH with a
+different `dateOfBirth` returns `409 DOB_LOCKED` (re-sending the same value is fine). Make the DOB
+field read-only when `aadhaar.verified`.
+
+**Siblings on one ride.** Send `student_ids` instead of `student_id` on quote and booking:
+
+```json
+{ "student_ids": ["<id>", "<id>"], "vehicle_type_id": "…",
+  "pickup_saved_location_id": "…", "destination_saved_location_id": "…" }
+```
+
+One ride, one driver, **one pickup code and one drop code** for all of them. Every child must be
+verified and yours. A saved location of any child on the ride may be used. The response adds
+`studentIds`, `students: [{ id, name, profilePhotoUrl }]` and
+`multiChild: { mode, children, … }`; `student` is still the first child. The fare is flat or
+per extra child by admin setting, so **always show the quote's `fare`**. More children than the
+admin allows returns `422 TOO_MANY_STUDENTS`. `student_id` alone still works.
+
+**Vehicles.** Use `GET /student-ride/vehicle-types` for the student ride vehicle picker: it lists
+only types allowed to carry a student, and **never a bike or scooter**. Choosing one that is not
+allowed returns `422 VEHICLE_NOT_ALLOWED`.
+
+**Carpools on the same route.**
+`GET /student-ride/rides/carpool-suggestions?from_lat=&from_lng=&to_lat=&to_lng=&date=`
+returns carpool rides along that route from **verified** vehicles only, in the carpool search
+result shape (§10b).
+
 ## 9. Parcel and medicine delivery
 
 Same ride engine underneath — `serviceType` is `parcel` / `medicine` and a `Delivery` doc is
@@ -1000,6 +1071,82 @@ Vehicle/goods-type validation is identical to booking, so an invalid pair fails 
 
 Medicine delivery types: `home_to_pharmacy`, `pharmacy_to_home`, `hospital_pickup`,
 `document_pickup`, `sample_pickup`, `return_pickup`.
+
+**Parcel photo, size, weight and the handover (new)**
+
+| Method | Path | Auth | |
+|---|---|---|---|
+| POST | `/deliveries/upload-photo` | user | `{ "image": "data:image/jpeg;base64,..." }` → `{ photoUrl }` (JPEG/PNG/WebP, ≤ 5 MB) |
+| POST | `/deliveries/:deliveryId/parcel-verified` | driver | parcel matches the photo — issues the sender's pickup code |
+| POST | `/deliveries/:deliveryId/verify-pickup-otp` | driver | `{ "otp": "1234" }` — starts the trip, issues the drop code |
+| POST | `/deliveries/:deliveryId/verify-drop-otp` | driver | `{ "otp": "5678" }` — completes the delivery (payment settles as for any ride) |
+| POST | `/deliveries/:deliveryId/otp/:kind/reissue` | user | `kind` = `pickup` or `drop`; a fresh code after expiry or 5 wrong tries |
+| POST | `/deliveries/:deliveryId/cancel` | user | same body and result as `PATCH /rides/:rideId/cancel` |
+
+New `parcel` fields on quote and booking:
+
+```json
+"parcel": { "photoUrl": "https://…", "size": "small|medium|large|custom",
+            "customSize": { "length": 40, "width": 30, "height": 20 },
+            "weight": 3.5,
+            "senderName": "Varun", "senderMobile": "9876543210",
+            "receiverName": "Asha", "receiverMobile": "9876501234" }
+```
+
+`weight` is **kilograms as a number** now (a label like `"5 kg"` is still accepted and parsed).
+`customSize` is centimetres and only for `size: "custom"`.
+
+**Quote → vehicles that fit.** When the quote has a weight or size, it adds
+`suitableVehicleTypes: [{ vehicleTypeId, name, iconType, icon, maxWeightKg, maxSize }]` and
+`vehicleFits` for the chosen one. Show only those. Booking a vehicle that cannot carry the parcel
+returns `422 PARCEL_VEHICLE_UNSUITABLE`. Limits are set per vehicle type in admin; a type with no
+limits takes anything.
+
+**The handover** — the order is fixed:
+
+```
+accepted → arriving (driver at pickup) → parcel-verified → sender reads out pickup code
+        → verify-pickup-otp (trip starts) → arrived (at drop) → receiver reads out drop code
+        → verify-drop-otp (delivered)
+```
+
+- The **driver never receives a code**. The driver app shows the parcel photo
+  (`parcel.photoUrl` is in every ride payload), taps *Parcel verified*, then types what the sender
+  and later the receiver read out.
+- The **sender** gets each code on the socket event `delivery:otp`
+  `{ deliveryId, rideId, kind, otp, expiresAt }` (their own `user:<id>` room only), and can always
+  re-read it from `GET /deliveries/:id` → `handover.codes.pickup` / `handover.codes.drop`. The sender
+  passes the drop code to the receiver (no SMS is sent).
+- Everyone on the ride gets progress without codes: `delivery:parcel-verified`,
+  `delivery:picked-up`, `delivery:delivered`, each `{ deliveryId, rideId, handover }`.
+- Pushes to the sender: `PARCEL_VERIFIED`, `PARCEL_PICKED_UP`, `PARCEL_DELIVERED` (the code is never
+  in the push text).
+
+`GET /deliveries/:id` and `/deliveries/active/me` now carry:
+
+```json
+"handover": { "enforced": false, "parcelVerified": true, "parcelVerifiedAt": "…",
+  "pickupOtp": { "issued": true, "verified": false, "expiresAt": "…", "attemptsRemaining": 5 },
+  "dropOtp":   { "issued": false, "verified": false, "expiresAt": null, "attemptsRemaining": 5 },
+  "pickedUpAt": null, "deliveredAt": null,
+  "codes": { "pickup": "4821", "drop": null } }      // sender only
+```
+
+Errors: `409 PARCEL_NOT_VERIFIED`, `409 PARCEL_INVALID_STEP` (e.g. not arrived yet),
+`422 INVALID_OTP` (`details.attemptsRemaining`), `429 OTP_ATTEMPTS_EXCEEDED`, `410 OTP_EXPIRED`,
+`409 OTP_ALREADY_VERIFIED`, `409 DELIVERY_CLOSED`.
+
+**`handover.enforced` — the switch.** It is `false` today, so the current apps keep working
+unchanged: `ride.otp` is still sent and the old driver flow still starts and completes parcels.
+When both new apps ship, the backend turns on `PARCEL_OTP_ENFORCED`, and then:
+- `ride.otp` is `""` for parcels everywhere (ride sockets, ride detail, history); on the delivery
+  endpoints the sender's `otp` is the code to show right now;
+- the driver **cannot** start without the pickup code or complete without the drop code
+  (`409 PARCEL_STEP_REQUIRED`), and `parcel-verified` needs the driver marked arrived first;
+- booking requires `photoUrl`, `size`, `weight`, both names and valid 10-digit mobiles
+  (`422 INVALID_PARCEL`).
+
+Build the new flow against `handover` now; do not depend on `ride.otp` for parcels.
 
 Use `GET /users/goods-types` for the parcel category picker. Reuse your ride live-tracking screen
 verbatim — `ride:state` carries `parcel` / `medicine` sub-objects and `deliveryId`.
@@ -1185,6 +1332,66 @@ the acceptance. That is a normal race, not a bug.
 
 `403 WOMEN_ONLY_RESTRICTED` means either the ride is women-only and the caller is not eligible, or
 they tried to publish one without an eligible profile. Check `gender` before blaming the ride.
+
+**Offering a ride needs approved documents.** Before a host's first ride:
+
+| Method | Path | |
+|---|---|---|
+| POST | `/carpool/documents` | `{ "kind", "file": "data:…;base64,…", "vehicle_id"?, "expiry_date"?, "document_number"? }` |
+| GET | `/carpool/documents/status` | what is uploaded, approved, missing or expired, per vehicle |
+
+| `kind` | Belongs to | `expiry_date` |
+|---|---|---|
+| `driverPhoto` | the host | – |
+| `drivingLicense` | the host | required |
+| `rc` | a vehicle (`vehicle_id`) | optional |
+| `insurance` | a vehicle (`vehicle_id`) | required |
+
+Files are JPEG/PNG/WebP/PDF up to 8 MB. Uploading a kind again replaces it (e.g. after a
+rejection). `GET /carpool/documents/status`:
+
+```json
+{ "host": { "driverPhoto": { "status": "APPROVED", … }, "drivingLicense": { … } },
+  "vehicles": [ { "vehicleId": "…", "verificationStatus": "PENDING",
+                  "documents": { "rc": { … }, "insurance": null },
+                  "missing": ["insurance"], "canPublish": false } ],
+  "canPublish": false }
+```
+
+Each document: `{ id, kind, label, url, expiryDate, expired, status, rejectionReason }` with
+`status` `PENDING` / `APPROVED` / `REJECTED`. An admin reviews each one, and the host gets a push
+(`CARPOOL_DOCUMENT_APPROVED` / `CARPOOL_DOCUMENT_REJECTED`). A vehicle becomes `VERIFIED` when
+all four are approved and in date. Publishing with an unverified vehicle returns
+`403 VEHICLE_NOT_VERIFIED`; a licence or insurance that expires before the ride date returns
+`403 DOCUMENT_EXPIRED`. Route the host to the documents screen on either.
+
+**Price ceiling.** `GET /carpool/price-limit?from_lat=&from_lng=&to_lat=&to_lng=&stops=lat,lng|lat,lng`
+→ `{ distanceKm, source, ratePerKm, maxPrice, basis }`. Use `maxPrice` as the slider maximum for
+`price_per_seat`. Publishing above it returns `422 PRICE_ABOVE_LIMIT`. `source` is
+`google_directions` or `straight_line` (approximate); `basis` is `flat_limit` until the admin
+sets a rate per km.
+
+**Booking additions** (all optional):
+
+```json
+{ "seat_count": 1, "pickup": { … }, "drop": { … },
+  "stoppage": { "name": "Petrol pump", "lat": 22.95, "lng": 76.04 },
+  "offered_price": 200,
+  "is_door_to_door": false }
+```
+
+- **Pickup, drop and any `stoppage` must lie along the host's route, in the direction of travel.**
+  This is now checked: `422 OUTSIDE_ROUTE`. Search results already satisfy it, so this only bites
+  hand-picked points.
+- **`offered_price`** is per seat. A lower offer is always allowed. A higher one only with a
+  `stoppage` or door-to-door (`422 INVALID_OFFER`). An offer always waits for the host, even
+  with instant booking on. The booking carries `offeredPrice`, `driverPricePerSeat`,
+  `pricePerSeat` (what this request is for) and `negotiationStatus`
+  (`none` / `offered` / `accepted` / `rejected`). The host sees the offer in the requests list and
+  gets the push `CARPOOL_OFFER_RECEIVED`.
+- **Door-to-door** books the whole car: `seatCount` becomes every seat and the total is the same
+  however many travel. It is only possible on a ride nobody else has asked for
+  (`409 DOOR_TO_DOOR_UNAVAILABLE`), and pickup/drop may be further off the route (admin limit).
 
 **Trips, ratings, tracking:**
 
@@ -1600,6 +1807,13 @@ Skip these in Flutter unless you're building an admin app. If you do, the list i
 - **A woman with no `gender` on her profile cannot use women-only rides** — not publish, not book.
   Prompt for it in the profile long before she reaches the carpool tab.
 - **Carpool has no payment.** `NOT_REQUIRED` everywhere until the model is confirmed.
+- **A new student cannot ride until an admin approves them.** Show `verificationStatus` on the
+  student card; `403 STUDENT_NOT_VERIFIED` is expected, not a bug.
+- **Editing a verified student's name, DOB, Aadhaar or school ID un-verifies them.** Warn first.
+- **Parcel codes are not in `ride.otp` for the new flow.** Read `handover.codes` / `delivery:otp`.
+  `ride.otp` for parcels becomes empty once enforcement is switched on.
+- **A carpool host needs four approved documents before Offer Ride works.** Check
+  `/carpool/documents/status` → `canPublish` before showing the publish form.
 - **Never convert the carpool date/time to UTC before sending it.** The server does it; converting
   in the app as well moves every ride by 5½ hours.
 - **`EXPIRED` is a carpool ride status the app must handle.** Unfiltered `my-offered-rides` and
