@@ -19,6 +19,7 @@ import { Delivery } from '../user/models/Delivery.js';
 import { getRideRoom, resolveSetPriceForRide } from './rideService.js';
 import { syncStudentRideWithDispatch } from '../studentRide/services/statusSyncService.js';
 import { studentDriverBlock } from '../studentRide/services/driverPayload.js';
+import { visibleRideOtp } from '../user/services/parcelPolicy.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
 import { resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
@@ -1570,7 +1571,7 @@ export const notifyRideAccepted = async (ride) => {
     serviceType: populatedRide.serviceType || 'ride',
     status: populatedRide.status,
     liveStatus: populatedRide.liveStatus,
-    otp: populatedRide.otp || '',
+    otp: visibleRideOtp(populatedRide),
     vehicleIconType: populatedRide.vehicleIconType || '',
     vehicleIconUrl: populatedRide.vehicleIconUrl || '',
     driver: populatedRide.driverId,
@@ -1588,7 +1589,7 @@ export const notifyRideAccepted = async (ride) => {
     estimatedDistanceMeters: populatedRide.estimatedDistanceMeters || 0,
     estimatedDurationMinutes: populatedRide.estimatedDurationMinutes || 0,
     paymentMethod: populatedRide.paymentMethod,
-    otp: populatedRide.otp || '',
+    otp: visibleRideOtp(populatedRide),
     vehicleIconType: populatedRide.vehicleIconType || '',
     vehicleIconUrl: populatedRide.vehicleIconUrl || '',
     parcel: populatedRide.parcel || null,
@@ -1627,7 +1628,7 @@ export const notifyRideAccepted = async (ride) => {
     status: populatedRide.status,
     liveStatus: populatedRide.liveStatus,
     acceptedAt: populatedRide.acceptedAt,
-    otp: populatedRide.otp || '',
+    otp: visibleRideOtp(populatedRide),
   });
 
   emitToRoom(getRideRoom(populatedRide._id), 'rideRequestClosed', {

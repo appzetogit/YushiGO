@@ -178,6 +178,10 @@ const buildVehicleFormData = (selectedVehicle = {}) => ({
   is_accept_share_ride: Number(selectedVehicle.is_accept_share_ride || 0),
   delivery_category: String(selectedVehicle.delivery_category || ''),
   delivery_distance_pricing: normalizeDeliveryDistancePricing(selectedVehicle.delivery_distance_pricing),
+  parcel_limits: {
+    max_weight_kg: selectedVehicle.parcel_limits?.max_weight_kg ?? '',
+    max_size: selectedVehicle.parcel_limits?.max_size || '',
+  },
   service_tax: String(selectedVehicle.service_tax ?? 0),
   admin_commission_type_from_driver: String(selectedVehicle.admin_commission_type_from_driver ?? 1),
   admin_commission_from_driver: String(selectedVehicle.admin_commission_from_driver ?? 0),
@@ -226,6 +230,10 @@ const defaultFormData = {
     base_price: '',
     free_distance: '',
     distance_price: '',
+  },
+  parcel_limits: {
+    max_weight_kg: '',
+    max_size: '',
   },
   service_tax: '0',
   admin_commission_type_from_driver: '1',
@@ -595,6 +603,13 @@ const VehicleType = ({ mode: propMode }) => {
         is_taxi: normalizeTaxiMode(formData.is_taxi || formData.transport_type),
         is_accept_share_ride: Number(formData.is_accept_share_ride || 0),
         delivery_category: showsDeliveryCategorySelector ? formData.delivery_category : '',
+        // Blank means no limit: the vehicle accepts any parcel, as before.
+        parcel_limits: showsDeliveryCategorySelector
+          ? {
+              max_weight_kg: formData.parcel_limits?.max_weight_kg === '' ? null : Number(formData.parcel_limits?.max_weight_kg),
+              max_size: formData.parcel_limits?.max_size || '',
+            }
+          : { max_weight_kg: null, max_size: '' },
         delivery_distance_pricing: showsDeliveryCategorySelector
           ? {
               enabled: Boolean(formData.delivery_distance_pricing?.enabled),
@@ -955,6 +970,51 @@ const VehicleType = ({ mode: propMode }) => {
               <p className="mt-2 text-xs text-slate-500">
                 This decides which delivery card this vehicle type appears under in the user parcel flow.
               </p>
+            </div>
+          ) : null}
+
+          {showsDeliveryCategorySelector ? (
+            <div className="lg:col-span-2 rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
+              <div className="mb-5">
+                <label className={labelClass}>Parcel Limits</label>
+                <p className="text-xs text-slate-500">
+                  What this vehicle can carry. Users only see vehicles that fit their parcel, and a booking for a parcel that
+                  does not fit is refused. Leave blank for no limit.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                <div>
+                  <label className={labelClass}>Max Weight (KG)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.parcel_limits?.max_weight_kg ?? ''}
+                    onChange={(e) => updateForm('parcel_limits', {
+                      ...formData.parcel_limits,
+                      max_weight_kg: e.target.value,
+                    })}
+                    className={inputClass}
+                    placeholder="No limit"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Largest Parcel Size</label>
+                  <select
+                    value={formData.parcel_limits?.max_size || ''}
+                    onChange={(e) => updateForm('parcel_limits', {
+                      ...formData.parcel_limits,
+                      max_size: e.target.value,
+                    })}
+                    className={inputClass}
+                  >
+                    <option value="">Any size</option>
+                    <option value="small">Small (bike)</option>
+                    <option value="medium">Medium (car)</option>
+                    <option value="large">Large (pickup truck)</option>
+                    <option value="custom">Custom / oversized</option>
+                  </select>
+                </div>
+              </div>
             </div>
           ) : null}
 

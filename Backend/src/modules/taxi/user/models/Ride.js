@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { RIDE_CANCELLED_BY, RIDE_LIVE_STATUS, RIDE_STATUS } from '../../constants/index.js';
+import { parseWeightKg } from '../services/parcelPolicy.js';
 
 const rideMessageSchema = new mongoose.Schema(
   {
@@ -92,6 +93,16 @@ const rideSchema = new mongoose.Schema(
      * candidate driver, and a query there would be paid by every ride type.
      * Written at booking and on each successful OTP verification.
      */
+    /**
+     * Parcel handover progress, mirrored from the Delivery so the lifecycle guard
+     * and serializers can read it without a second query. Booleans only — the
+     * codes themselves live on the Delivery.
+     */
+    parcelHandover: {
+      parcelVerified: { type: Boolean, default: false },
+      pickupOtpVerified: { type: Boolean, default: false },
+      dropOtpVerified: { type: Boolean, default: false },
+    },
     studentSummary: {
       displayName: { type: String, default: '', trim: true },
       pickupOtpVerified: { type: Boolean, default: false },
@@ -154,10 +165,31 @@ const rideSchema = new mongoose.Schema(
         default: '',
         trim: true,
       },
+      // Kilograms. Was a free-text string; the setter still accepts labels such
+      // as "5 kg" so older clients keep working.
       weight: {
+        type: Number,
+        default: null,
+        min: 0,
+        set: parseWeightKg,
+      },
+      photoUrl: {
         type: String,
         default: '',
         trim: true,
+      },
+      size: {
+        type: String,
+        enum: ['small', 'medium', 'large', 'custom', ''],
+        default: '',
+        lowercase: true,
+        trim: true,
+      },
+      // Centimetres; only meaningful when size is 'custom'.
+      customSize: {
+        length: { type: Number, default: null, min: 0 },
+        width: { type: Number, default: null, min: 0 },
+        height: { type: Number, default: null, min: 0 },
       },
       description: {
         type: String,

@@ -104,6 +104,18 @@ const vehicleSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    /**
+     * What a delivery vehicle can carry. Empty means no limit, so a vehicle type
+     * nobody has configured keeps accepting every parcel, as it did before.
+     */
+    parcel_limits: {
+      max_weight_kg: { type: Number, default: null, min: 0 },
+      max_size: {
+        type: String,
+        enum: ['small', 'medium', 'large', 'custom', ''],
+        default: '',
+      },
+    },
     delivery_distance_pricing: {
       enabled: {
         type: Boolean,

@@ -6541,7 +6541,7 @@ export const listVehicleTypes = async (queryParams = {}) => {
       : { $in: [normalizedTransportType, 'both'] };
   }
   const items = await Vehicle.find(query)
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active createdAt updatedAt')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean();
   const results = items.map((item) => ({
@@ -6552,6 +6552,7 @@ export const listVehicleTypes = async (queryParams = {}) => {
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
     delivery_distance_pricing: normalizeDeliveryDistancePricing(item.delivery_distance_pricing),
+    parcel_limits: normalizeParcelLimits(item.parcel_limits),
     service_tax: normalizeDeliveryServiceTax(item.service_tax),
   }));
 
@@ -6582,6 +6583,7 @@ export const listVehicleCatalog = async () => {
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
     delivery_distance_pricing: normalizeDeliveryDistancePricing(item.delivery_distance_pricing),
+    parcel_limits: normalizeParcelLimits(item.parcel_limits),
     supported_vehicles: Array.isArray(item.supported_other_vehicle_types)
       ? item.supported_other_vehicle_types.map((v) => String(v)).join(',')
       : '',
@@ -6645,6 +6647,7 @@ export const getVehicleTypeById = async (id) => {
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
     delivery_distance_pricing: normalizeDeliveryDistancePricing(item.delivery_distance_pricing),
+    parcel_limits: normalizeParcelLimits(item.parcel_limits),
     service_tax: normalizeDeliveryServiceTax(item.service_tax),
     supported_vehicles: Array.isArray(item.supported_other_vehicle_types)
       ? item.supported_other_vehicle_types.map((v) => String(v)).join(',')
@@ -6662,7 +6665,7 @@ export const listPublicVehicleCatalog = async () => {
   }
 
   const items = await Vehicle.find()
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -6678,6 +6681,7 @@ export const listPublicVehicleCatalog = async () => {
     category: item.category || '',
     delivery_category: item.delivery_category || '',
     delivery_distance_pricing: normalizeDeliveryDistancePricing(item.delivery_distance_pricing),
+    parcel_limits: normalizeParcelLimits(item.parcel_limits),
     service_tax: normalizeDeliveryServiceTax(item.service_tax),
     ...normalizeVehicleCommissionConfig(item),
     capacity: Number(item.capacity || 0),
@@ -6723,6 +6727,19 @@ export const listVehiclePreferences = async () => {
   return listPreferences();
 };
 
+/** Parcel carrying limits for a delivery vehicle type; blank means unlimited. */
+const normalizeParcelLimits = (limits = {}) => {
+  const weight = Number(limits?.max_weight_kg);
+  const size = String(limits?.max_size || '').trim().toLowerCase();
+
+  return {
+    max_weight_kg: limits?.max_weight_kg === '' || limits?.max_weight_kg === null || !Number.isFinite(weight) || weight <= 0
+      ? null
+      : weight,
+    max_size: ['small', 'medium', 'large', 'custom'].includes(size) ? size : '',
+  };
+};
+
 export const createVehicleType = async (payload) => {
   if (!payload.name?.trim()) {
     throw new ApiError(400, 'Vehicle name is required');
@@ -6753,6 +6770,9 @@ export const createVehicleType = async (payload) => {
     delivery_distance_pricing: ['delivery', 'both'].includes(transportType)
       ? normalizeDeliveryDistancePricing(payload.delivery_distance_pricing)
       : normalizeDeliveryDistancePricing(),
+    parcel_limits: ['delivery', 'both'].includes(transportType)
+      ? normalizeParcelLimits(payload.parcel_limits)
+      : normalizeParcelLimits(),
     service_tax: ['delivery', 'both'].includes(transportType)
       ? normalizeDeliveryServiceTax(payload.service_tax)
       : 0,
@@ -6834,6 +6854,11 @@ export const updateVehicleType = async (id, payload) => {
     vehicle.delivery_distance_pricing = ['delivery', 'both'].includes(vehicle.transport_type)
       ? normalizeDeliveryDistancePricing(payload.delivery_distance_pricing, vehicle.delivery_distance_pricing)
       : normalizeDeliveryDistancePricing();
+  }
+  if (payload.parcel_limits !== undefined || payload.transport_type !== undefined) {
+    vehicle.parcel_limits = ['delivery', 'both'].includes(vehicle.transport_type)
+      ? normalizeParcelLimits(payload.parcel_limits ?? vehicle.parcel_limits)
+      : normalizeParcelLimits();
   }
   if (payload.service_tax !== undefined || payload.transport_type !== undefined) {
     vehicle.service_tax = ['delivery', 'both'].includes(vehicle.transport_type)

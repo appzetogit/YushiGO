@@ -9,8 +9,9 @@
     "start": "node server.js",
     "test:student-ride": "node tests/studentRide/gate1.mjs && node tests/studentRide/gate2.mjs && node tests/studentRide/gate3.mjs && node tests/studentRide/statusSync.mjs && node tests/studentRide/integration.mjs",
     "test:carpool": "node tests/carpool/routeMatching.mjs && node tests/carpool/booking.mjs && node tests/carpool/rating.mjs && node tests/carpool/expiry.mjs",
+    "test:parcel": "node tests/parcel/handover.mjs",
     "test:api": "node tests/api/http.mjs",
-    "test": "npm run test:student-ride && npm run test:carpool && npm run test:api"
+    "test": "npm run test:student-ride && npm run test:carpool && npm run test:parcel && npm run test:api"
   },
   "dependencies": {
     "@phonepe-pg/pg-sdk-node": "^2.0.6",

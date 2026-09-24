@@ -24,6 +24,7 @@ import { getTipSettings } from './appSettingsService.js';
 import { env } from '../../../config/env.js';
 import { sendGuardianTrackingSms } from './smsService.js';
 import { getBidRideSettings } from './transportSettingsService.js';
+import { PARCEL_SIZES, parcelStepBlocker, parseWeightKg, visibleRideOtp } from '../user/services/parcelPolicy.js';
 
 const clearUserActiveRideIfPresent = async (user) => {
   if (!user?.currentRideId) {
@@ -358,7 +359,18 @@ const DEFAULT_MAX_BID_STEPS = 5;
 
 const normalizeParcelPayload = (parcel = {}) => ({
   category: String(parcel.category || '').trim(),
-  weight: String(parcel.weight || '').trim(),
+  weight: parseWeightKg(parcel.weight),
+  photoUrl: String(parcel.photoUrl || parcel.photo_url || '').trim(),
+  size: PARCEL_SIZES.includes(String(parcel.size || '').trim().toLowerCase())
+    ? String(parcel.size).trim().toLowerCase()
+    : '',
+  customSize: parcel.customSize || parcel.custom_size
+    ? {
+        length: Number((parcel.customSize || parcel.custom_size).length) || null,
+        width: Number((parcel.customSize || parcel.custom_size).width) || null,
+        height: Number((parcel.customSize || parcel.custom_size).height) || null,
+      }
+    : { length: null, width: null, height: null },
   description: String(parcel.description || '').trim(),
   deliveryCategory: String(parcel.deliveryCategory || parcel.delivery_category || '').trim().toLowerCase(),
   goodsTypeFor: String(parcel.goodsTypeFor || parcel.goods_type_for || '').trim(),
@@ -1325,6 +1337,7 @@ export const serializeRideDetail = async (ride) => {
 
   return {
     ...plain,
+    otp: visibleRideOtp(ride),
     // null rather than {} while unassigned, so a client can branch on presence.
     driver: driver
       ? {
@@ -1510,7 +1523,7 @@ export const serializeRideRealtime = (ride) => ({
         updatedAt: ride.driverPaymentCollection.updatedAt || null,
       }
     : null,
-  otp: ride.otp || '',
+  otp: visibleRideOtp(ride),
   parcel: ride.deliveryId?.parcel || ride.parcel || null,
   medicine: ride.deliveryId?.medicine || ride.medicine || null,
   intercity: ride.intercity || null,
@@ -1723,7 +1736,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     estimatedDistanceMeters: ride.estimatedDistanceMeters || 0,
     estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
     paymentMethod: ride.paymentMethod,
-    otp: ride.otp || '',
+    otp: visibleRideOtp(ride),
     parcel: ride.deliveryId?.parcel || ride.parcel || null,
   medicine: ride.deliveryId?.medicine || ride.medicine || null,
     intercity: ride.intercity || null,
@@ -1882,6 +1895,16 @@ export const updateRideLifecycle = async ({ rideId, driverId, nextStatus, paymen
 
   if (!config.allowedCurrent.includes(ride.liveStatus)) {
     throw new ApiError(409, `Ride cannot move from ${ride.liveStatus} to ${nextStatus}`);
+  }
+
+  // Parcels only, and only with PARCEL_OTP_ENFORCED: no pickup without the
+  // sender's code, no completion without the receiver's.
+  const parcelBlocker = parcelStepBlocker(ride, nextStatus);
+
+  if (parcelBlocker) {
+    const error = new ApiError(409, parcelBlocker);
+    error.code = 'PARCEL_STEP_REQUIRED';
+    throw error;
   }
 
   ride.liveStatus = nextStatus;
