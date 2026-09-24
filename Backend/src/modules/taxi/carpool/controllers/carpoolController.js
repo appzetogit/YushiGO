@@ -3,6 +3,9 @@ import * as rideService from '../services/carpoolRideService.js';
 import * as bookingService from '../services/carpoolBookingService.js';
 import * as ratingService from '../services/carpoolRatingService.js';
 import * as tripsService from '../services/carpoolTripsService.js';
+import * as documentService from '../services/carpoolDocumentService.js';
+import { priceLimitFor } from '../services/carpoolPricingService.js';
+import { carpoolError } from '../services/carpoolVehicleService.js';
 
 export const listVehicles = async (req, res) => {
   const vehicles = await vehicleService.listVehicles({ userId: req.auth.sub });
@@ -194,4 +197,70 @@ export const getMyTrips = async (req, res) => {
 export const getHome = async (req, res) => {
   const home = await tripsService.getCarpoolHome({ userId: req.auth.sub });
   res.json({ success: true, data: home });
+};
+
+// --- Host documents (Offer Ride verification) --------------------------------
+
+export const uploadDocument = async (req, res) => {
+  const document = await documentService.uploadDocument({ userId: req.auth.sub, payload: req.body });
+  res.status(201).json({ success: true, data: { document } });
+};
+
+export const getDocumentStatus = async (req, res) => {
+  const data = await documentService.getDocumentStatus({ userId: req.auth.sub });
+  res.json({ success: true, data });
+};
+
+// --- Price ceiling for the publish screen ------------------------------------
+
+/**
+ * The most a host may charge per seat on a route. Takes the endpoints and any
+ * stops ("lat,lng|lat,lng"), in travel order.
+ */
+export const getPriceLimit = async (req, res) => {
+  const point = (lat, lng, field) => {
+    const coords = [Number(lng), Number(lat)];
+    if (!coords.every(Number.isFinite)) {
+      throw carpoolError(422, 'INVALID_ROUTE', `${field} is required.`);
+    }
+    return coords;
+  };
+
+  const stops = String(req.query.stops || '')
+    .split('|')
+    .filter(Boolean)
+    .map((pair) => {
+      const [lat, lng] = pair.split(',');
+      return point(lat, lng, 'stops');
+    });
+
+  const coordinates = [
+    point(req.query.from_lat ?? req.query.pickup_lat, req.query.from_lng ?? req.query.pickup_lng, 'from_lat/from_lng'),
+    ...stops,
+    point(req.query.to_lat ?? req.query.drop_lat, req.query.to_lng ?? req.query.drop_lng, 'to_lat/to_lng'),
+  ];
+
+  const limit = await priceLimitFor(coordinates);
+  res.json({ success: true, data: limit });
+};
+
+// --- Admin: document review --------------------------------------------------
+
+export const adminListDocuments = async (req, res) => {
+  const data = await documentService.listDocumentsForAdmin(req.query);
+  res.json({ success: true, data });
+};
+
+export const adminApproveDocument = async (req, res) => {
+  const document = await documentService.approveDocument({ documentId: req.params.documentId, adminId: req.auth.sub });
+  res.json({ success: true, data: { document } });
+};
+
+export const adminRejectDocument = async (req, res) => {
+  const document = await documentService.rejectDocument({
+    documentId: req.params.documentId,
+    adminId: req.auth.sub,
+    reason: req.body?.reason,
+  });
+  res.json({ success: true, data: { document } });
 };

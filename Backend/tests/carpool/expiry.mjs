@@ -13,6 +13,8 @@ const DB_NAME = `carpool_expiry_${Date.now()}`;
 process.env.MONGODB_URI = process.env.CARPOOL_TEST_URI
   || `mongodb://127.0.0.1:27017/${DB_NAME}?replicaSet=rs0&directConnection=true`;
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test';
+// This suite covers booking mechanics; the document gate has its own suite.
+process.env.CARPOOL_REQUIRE_VERIFIED_VEHICLE = 'false';
 process.env.CARPOOL_INSTANT_BOOKING = 'false';
 process.env.CARPOOL_TIMEZONE = 'Asia/Kolkata';
 process.env.CARPOOL_EXPIRY_GRACE_MINUTES = '120';

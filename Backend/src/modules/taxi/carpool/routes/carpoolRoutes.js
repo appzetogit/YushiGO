@@ -13,6 +13,13 @@ carpoolRouter.post('/carpool/vehicles', asUser, asyncHandler(carpool.createVehic
 carpoolRouter.patch('/carpool/vehicles/:vehicleId', asUser, asyncHandler(carpool.updateVehicle));
 carpoolRouter.delete('/carpool/vehicles/:vehicleId', asUser, asyncHandler(carpool.deleteVehicle));
 
+// Host verification documents — required before offering a ride.
+carpoolRouter.post('/carpool/documents', asUser, asyncHandler(carpool.uploadDocument));
+carpoolRouter.get('/carpool/documents/status', asUser, asyncHandler(carpool.getDocumentStatus));
+
+// The per-seat price ceiling for a route, for the publish screen's slider.
+carpoolRouter.get('/carpool/price-limit', asUser, asyncHandler(carpool.getPriceLimit));
+
 // Rides. `search` and `my-offered-rides` are declared before `/:rideId` so the
 // literal segments are not captured by the parameter route.
 carpoolRouter.post('/carpool/rides', asUser, asyncHandler(carpool.createRide));
@@ -41,3 +48,10 @@ carpoolRouter.post('/carpool/ratings', asUser, asyncHandler(carpool.createRating
 carpoolRouter.get('/carpool/ratings/pending', asUser, asyncHandler(carpool.listPendingRatings));
 carpoolRouter.get('/carpool/me/stats', asUser, asyncHandler(carpool.getMyStats));
 carpoolRouter.get('/carpool/users/:userId/ratings', asUser, asyncHandler(carpool.listUserRatings));
+
+// Admin: review host documents. Authenticated here rather than relying on the
+// admin router's prefix guard, so it holds regardless of mount order.
+const asAdmin = authenticate(['admin']);
+carpoolRouter.get('/admin/carpool/documents', asAdmin, asyncHandler(carpool.adminListDocuments));
+carpoolRouter.post('/admin/carpool/documents/:documentId/approve', asAdmin, asyncHandler(carpool.adminApproveDocument));
+carpoolRouter.post('/admin/carpool/documents/:documentId/reject', asAdmin, asyncHandler(carpool.adminRejectDocument));

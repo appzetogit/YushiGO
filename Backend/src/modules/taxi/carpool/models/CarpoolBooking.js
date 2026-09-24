@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { CARPOOL_BOOKING_STATUS, CARPOOL_PAYMENT_STATUS } from '../constants/index.js';
+import { CARPOOL_BOOKING_STATUS, CARPOOL_NEGOTIATION_STATUS, CARPOOL_PAYMENT_STATUS } from '../constants/index.js';
 
 const carpoolPlaceSchema = new mongoose.Schema(
   {
@@ -38,6 +38,25 @@ const carpoolBookingSchema = new mongoose.Schema(
     },
     pickup: { type: carpoolPlaceSchema, required: true },
     drop: { type: carpoolPlaceSchema, required: true },
+    // An extra stop the passenger asks for along the route.
+    stoppage: { type: carpoolPlaceSchema, default: null },
+
+    /**
+     * Door-to-door: the passenger takes the whole car, from their door to
+     * theirs. seatCount is every seat, and the price does not change with how
+     * many people actually travel.
+     */
+    isDoorToDoor: { type: Boolean, default: false },
+
+    // The host's per-seat price when the request was made, whatever was agreed.
+    driverPricePerSeat: { type: Number, default: null, min: 0 },
+    // The passenger's per-seat offer, if they made one.
+    offeredPrice: { type: Number, default: null, min: 0 },
+    negotiationStatus: {
+      type: String,
+      enum: Object.values(CARPOOL_NEGOTIATION_STATUS),
+      default: CARPOOL_NEGOTIATION_STATUS.NONE,
+    },
 
     // Priced at request time and frozen. A host editing the fare later must not
     // silently change what an already-requested passenger owes.

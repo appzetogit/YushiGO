@@ -21,6 +21,7 @@ import {
 import { getStatsForUsers } from './carpoolRatingService.js';
 import { todayInZone, zonedWallClockToUtc } from './departureTime.js';
 import { expireRide, isPastExpiry } from './carpoolExpiryService.js';
+import { priceLimitFor } from './carpoolPricingService.js';
 
 /**
  * Whether an account may take part in a women-only ride.
@@ -209,7 +210,6 @@ export const createRide = async ({ userId, payload }) => {
   const config = carpoolConfig();
 
   const vehicle = await requireOwnedVehicle({ vehicleId: payload?.vehicle_id ?? payload?.vehicleId, userId });
-  assertVehicleEligibleToPublish(vehicle);
 
   const origin = parsePlace(payload?.origin, 'origin');
   const destination = parsePlace(payload?.destination, 'destination');
@@ -220,6 +220,8 @@ export const createRide = async ({ userId, payload }) => {
     date: payload?.date,
     departureTime: payload?.departure_time ?? payload?.departureTime,
   });
+
+  await assertVehicleEligibleToPublish(vehicle, { departureAt });
 
   const offeredSeats = Number(payload?.available_seats ?? payload?.availableSeats);
   const pricePerSeat = Number(payload?.price_per_seat ?? payload?.pricePerSeat);
@@ -242,15 +244,18 @@ export const createRide = async ({ userId, payload }) => {
     );
   }
 
-  if (!Number.isFinite(pricePerSeat) || pricePerSeat < 0 || pricePerSeat > config.maxPricePerSeat) {
+  const routeCoordinates = buildRouteCoordinates({ origin, stops, destination });
+
+  // Cost sharing, not a fare: the admin's rate per km over this route caps it.
+  const limit = await priceLimitFor(routeCoordinates);
+
+  if (!Number.isFinite(pricePerSeat) || pricePerSeat < 0 || pricePerSeat > limit.maxPrice) {
     throw carpoolError(
       422,
-      CARPOOL_ERRORS.INVALID_ROUTE,
-      `price_per_seat must be between 0 and ${config.maxPricePerSeat}.`,
+      CARPOOL_ERRORS.PRICE_ABOVE_LIMIT,
+      `price_per_seat must be between 0 and ${limit.maxPrice} for this route.`,
     );
   }
-
-  const routeCoordinates = buildRouteCoordinates({ origin, stops, destination });
   const preferences = payload?.preferences || {};
   const womenOnly = Boolean(preferences.women_only ?? preferences.womenOnly);
 
@@ -276,6 +281,8 @@ export const createRide = async ({ userId, payload }) => {
     estimatedArrivalTime: String(payload?.estimated_arrival_time || payload?.estimatedArrivalTime || '').trim(),
     offeredSeats,
     pricePerSeat,
+    routeDistanceKm: limit.distanceKm,
+    maxPricePerSeat: limit.maxPrice,
     preferences: {
       womenOnly,
       ac: Boolean(preferences.ac),

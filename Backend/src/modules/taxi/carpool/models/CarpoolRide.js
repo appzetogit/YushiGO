@@ -81,6 +81,9 @@ const carpoolRideSchema = new mongoose.Schema(
     offeredSeats: { type: Number, required: true, min: 1 },
     bookedSeats: { type: Number, default: 0, min: 0 },
     pricePerSeat: { type: Number, required: true, min: 0 },
+    // The ceiling this ride was published under, and the distance it came from.
+    routeDistanceKm: { type: Number, default: null, min: 0 },
+    maxPricePerSeat: { type: Number, default: null, min: 0 },
 
     preferences: {
       /**

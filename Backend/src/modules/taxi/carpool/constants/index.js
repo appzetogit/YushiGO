@@ -50,9 +50,9 @@ export const carpoolConfig = () => ({
   maxSeatsPerBooking: numberFromEnv('CARPOOL_MAX_SEATS_PER_BOOKING', 4),
   maxPricePerSeat: numberFromEnv('CARPOOL_MAX_PRICE_PER_SEAT', 10000),
   searchLimit: numberFromEnv('CARPOOL_SEARCH_LIMIT', 50),
-  // Publishing is not gated on verification by default; the badge is shown and
-  // the operator can turn hard gating on later without a schema change.
-  requireVerifiedVehicle: String(process.env.CARPOOL_REQUIRE_VERIFIED_VEHICLE || '').toLowerCase() === 'true',
+  // Publishing requires approved host documents (driver photo, licence, RC,
+  // insurance). CARPOOL_REQUIRE_VERIFIED_VEHICLE=false switches the gate off.
+  requireVerifiedVehicle: String(process.env.CARPOOL_REQUIRE_VERIFIED_VEHICLE ?? 'true').toLowerCase() !== 'false',
   // Cash between users for now. The settlement seam in carpoolSettlement.js is
   // where a wallet or gateway model attaches.
   instantBooking: String(process.env.CARPOOL_INSTANT_BOOKING || '').toLowerCase() === 'true',
@@ -85,4 +85,17 @@ export const CARPOOL_ERRORS = Object.freeze({
   RATING_NOT_ALLOWED: 'RATING_NOT_ALLOWED',
   DUPLICATE_RATING: 'DUPLICATE_RATING',
   RIDE_EXPIRED: 'RIDE_EXPIRED',
+  INVALID_DOCUMENT: 'INVALID_DOCUMENT',
+  DOCUMENT_EXPIRED: 'DOCUMENT_EXPIRED',
+  PRICE_ABOVE_LIMIT: 'PRICE_ABOVE_LIMIT',
+  OUTSIDE_ROUTE: 'OUTSIDE_ROUTE',
+  INVALID_OFFER: 'INVALID_OFFER',
+  DOOR_TO_DOOR_UNAVAILABLE: 'DOOR_TO_DOOR_UNAVAILABLE',
+});
+
+export const CARPOOL_NEGOTIATION_STATUS = Object.freeze({
+  NONE: 'none',
+  OFFERED: 'offered',
+  ACCEPTED: 'accepted',
+  REJECTED: 'rejected',
 });

@@ -18,6 +18,8 @@ process.env.MONGODB_URI = process.env.API_TEST_URI
   || `mongodb://127.0.0.1:27017/${DB_NAME}?replicaSet=rs0&directConnection=true`;
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'api-test-secret';
 process.env.NODE_ENV = 'test';
+// Carpool publishing here is about the HTTP contract; the document gate has its own suite.
+process.env.CARPOOL_REQUIRE_VERIFIED_VEHICLE = 'false';
 process.env.CARPOOL_INSTANT_BOOKING = 'false';
 
 const { createApp } = await import('../../src/app.js');

@@ -143,19 +143,14 @@ export const deleteVehicle = async ({ vehicleId, userId }) => {
 };
 
 /**
- * Gate applied when publishing. Off by default: the badge is shown in search
- * results and the operator can require verification later by config alone.
+ * Gate applied when publishing: approved host documents, none lapsing before
+ * the ride. On by default; CARPOOL_REQUIRE_VERIFIED_VEHICLE=false turns it off.
  */
-export const assertVehicleEligibleToPublish = (vehicle) => {
+export const assertVehicleEligibleToPublish = async (vehicle, { departureAt = null } = {}) => {
   if (!carpoolConfig().requireVerifiedVehicle) {
     return;
   }
 
-  if (vehicle.verificationStatus !== CARPOOL_VEHICLE_VERIFICATION.VERIFIED) {
-    throw carpoolError(
-      403,
-      CARPOOL_ERRORS.VEHICLE_NOT_VERIFIED,
-      'This vehicle must be verified before you can publish a ride.',
-    );
-  }
+  const { assertDocumentsValidFor } = await import('./carpoolDocumentService.js');
+  await assertDocumentsValidFor({ vehicle, departureAt });
 };

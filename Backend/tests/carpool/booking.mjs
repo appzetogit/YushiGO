@@ -13,6 +13,8 @@ const DB_NAME = `carpool_test_${Date.now()}`;
 process.env.MONGODB_URI = process.env.CARPOOL_TEST_URI
   || `mongodb://127.0.0.1:27017/${DB_NAME}?replicaSet=rs0&directConnection=true`;
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test';
+// This suite covers booking mechanics; the document gate has its own suite.
+process.env.CARPOOL_REQUIRE_VERIFIED_VEHICLE = 'false';
 process.env.CARPOOL_INSTANT_BOOKING = 'false';
 
 const rideService = await import('../../src/modules/taxi/carpool/services/carpoolRideService.js');
@@ -366,6 +368,9 @@ const publishWomenOnly = async (userId = priya, vehicleId = priyaVehicle.id) =>
     userId,
     payload: {
       vehicle_id: vehicleId, origin: INDORE, destination: UJJAIN, pickup: INDORE, drop: UJJAIN,
+      // Via Dewas, so the shared booking payload (Dewas → Ujjain) is on the route:
+      // bookings are now checked against the host's corridor.
+      stops: [{ ...DEWAS, order: 1 }],
       date: tomorrow, departure_time: '09:00', available_seats: 3, price_per_seat: 150,
       preferences: { women_only: true },
     },

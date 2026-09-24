@@ -4,9 +4,12 @@ import { CarpoolRide } from '../models/CarpoolRide.js';
 import {
   CARPOOL_BOOKING_STATUS,
   CARPOOL_ERRORS,
+  CARPOOL_NEGOTIATION_STATUS,
   CARPOOL_RIDE_STATUS,
   carpoolConfig,
 } from '../constants/index.js';
+import { closestApproach, evaluateRouteMatch } from './routeMatching.js';
+import { getCarpoolSettings } from './carpoolPricingService.js';
 import { carpoolError } from './carpoolVehicleService.js';
 import { assertWomenOnlyEligible, requireOwnedRide } from './carpoolRideService.js';
 import * as settlement from './carpoolSettlement.js';
@@ -44,6 +47,11 @@ export const serializeBooking = (booking, { ride = null } = {}) => ({
   paymentStatus: booking.paymentStatus,
   cancellationReason: booking.cancellationReason || '',
   cancelledBy: booking.cancelledBy,
+  stoppage: booking.stoppage || null,
+  isDoorToDoor: Boolean(booking.isDoorToDoor),
+  driverPricePerSeat: booking.driverPricePerSeat ?? booking.pricePerSeat,
+  offeredPrice: booking.offeredPrice ?? null,
+  negotiationStatus: booking.negotiationStatus || CARPOOL_NEGOTIATION_STATUS.NONE,
   createdAt: booking.createdAt,
   acceptedAt: booking.acceptedAt,
   ...(ride
@@ -166,6 +174,18 @@ export const createBooking = async ({ rideId, userId, payload }) => {
     );
   }
 
+  const isDoorToDoor = Boolean(payload?.is_door_to_door ?? payload?.isDoorToDoor ?? false);
+  const rawOffer = payload?.offered_price ?? payload?.offeredPrice;
+  const offeredPrice = rawOffer === undefined || rawOffer === null || rawOffer === '' ? null : Number(rawOffer);
+
+  if (offeredPrice !== null && (!Number.isFinite(offeredPrice) || offeredPrice < 0 || offeredPrice > config.maxPricePerSeat)) {
+    throw carpoolError(422, CARPOOL_ERRORS.INVALID_OFFER, `offered_price must be between 0 and ${config.maxPricePerSeat}.`);
+  }
+
+  const rawStoppage = payload?.stoppage;
+  const stoppage = rawStoppage ? parsePlace(rawStoppage, 'stoppage', CARPOOL_ERRORS.OUTSIDE_ROUTE) : null;
+  const carpoolSettings = await getCarpoolSettings();
+
   const notifications = [];
 
   const result = await runInTransaction(async (session) => {
@@ -196,26 +216,92 @@ export const createBooking = async ({ rideId, userId, payload }) => {
       await assertWomenOnlyEligible({ userId, action: 'book', session });
     }
 
+    // Door-to-door takes the whole car, so it is only possible while nobody
+    // else holds or has asked for a seat.
+    const requestedSeats = isDoorToDoor ? ride.offeredSeats : seatCount;
+
+    if (isDoorToDoor) {
+      const others = await CarpoolBooking.countDocuments({
+        rideId: ride._id,
+        passengerId: { $ne: userId },
+        isActive: true,
+      }).session(session);
+
+      if (others > 0 || ride.bookedSeats > 0) {
+        throw carpoolError(409, CARPOOL_ERRORS.DOOR_TO_DOOR_UNAVAILABLE, 'Door-to-door is not available: other passengers are already on this ride.');
+      }
+    }
+
     // A request holds nothing, so this is an early courtesy check; the binding
     // guarantee is the conditional update at acceptance.
-    if ((ride.offeredSeats - ride.bookedSeats) < seatCount) {
+    if ((ride.offeredSeats - ride.bookedSeats) < requestedSeats) {
       throw carpoolError(409, CARPOOL_ERRORS.SEATS_UNAVAILABLE, 'Not enough seats available.');
     }
 
     const pickup = parsePlace(payload?.pickup, 'pickup', CARPOOL_ERRORS.INVALID_PICKUP);
     const drop = parsePlace(payload?.drop, 'drop', CARPOOL_ERRORS.INVALID_DROP);
 
-    const instant = config.instantBooking;
+    /**
+     * Pickup and drop must lie along the host's route, in order — the same
+     * corridor rule as search, so a booking cannot be made for a trip search
+     * would never have offered. Door-to-door allows the admin's wider detour.
+     */
+    const matchConfig = carpoolConfig();
+    const tolerance = isDoorToDoor ? carpoolSettings.doorToDoorMaxDetourKm : null;
+    const routeCoordinates = ride.routePath?.coordinates || [];
+    const match = routeCoordinates.length >= 2
+      ? evaluateRouteMatch({
+          routeCoordinates,
+          pickupPoint: [pickup.longitude, pickup.latitude],
+          dropPoint: [drop.longitude, drop.latitude],
+          pickupToleranceKm: tolerance ?? matchConfig.pickupRouteToleranceKm,
+          dropToleranceKm: tolerance ?? matchConfig.dropRouteToleranceKm,
+        })
+      : true;
+
+    if (!match) {
+      throw carpoolError(
+        422,
+        CARPOOL_ERRORS.OUTSIDE_ROUTE,
+        isDoorToDoor
+          ? `Pickup and drop must be within ${tolerance} km of the host's route, in the direction of travel.`
+          : 'Pickup and drop must be along the host\'s route, in the direction of travel.',
+      );
+    }
+
+    if (stoppage && routeCoordinates.length >= 2) {
+      const approach = closestApproach([stoppage.longitude, stoppage.latitude], routeCoordinates);
+
+      if (approach.distanceKm > (tolerance ?? matchConfig.pickupRouteToleranceKm)) {
+        throw carpoolError(422, CARPOOL_ERRORS.OUTSIDE_ROUTE, 'The extra stop must be along the host\'s route.');
+      }
+    }
+
+    // Offering more than the host asks is for extra service only — a custom
+    // stop or door-to-door. A lower offer is always allowed; the host decides.
+    if (offeredPrice !== null && offeredPrice > ride.pricePerSeat && !stoppage && !isDoorToDoor) {
+      throw carpoolError(
+        422,
+        CARPOOL_ERRORS.INVALID_OFFER,
+        'You can offer more than the host\'s price only for an extra stop or a door-to-door trip.',
+      );
+    }
+
+    const negotiating = offeredPrice !== null && offeredPrice !== ride.pricePerSeat;
+    const agreedPerSeat = negotiating ? offeredPrice : ride.pricePerSeat;
+
+    // An offer or a door-to-door trip always needs the host's answer.
+    const instant = config.instantBooking && !negotiating && !isDoorToDoor;
     let seatsHeld = 0;
 
     if (instant) {
-      const reserved = await reserveSeats({ rideId: ride._id, seats: seatCount, session });
+      const reserved = await reserveSeats({ rideId: ride._id, seats: requestedSeats, session });
 
       if (!reserved) {
         throw carpoolError(409, CARPOOL_ERRORS.SEATS_UNAVAILABLE, 'Not enough seats available.');
       }
 
-      seatsHeld = seatCount;
+      seatsHeld = requestedSeats;
     }
 
     const payment = instant
@@ -230,11 +316,18 @@ export const createBooking = async ({ rideId, userId, payload }) => {
         passengerId: userId,
         // Taken from the ride, never from the request body (§17).
         driverId: ride.driverId,
-        seatCount,
+        seatCount: requestedSeats,
         pickup,
         drop,
-        pricePerSeat: ride.pricePerSeat,
-        totalAmount: Math.round(ride.pricePerSeat * seatCount * 100) / 100,
+        stoppage,
+        isDoorToDoor,
+        // The price this request is for: the offer if there is one. Frozen once
+        // accepted, as before.
+        pricePerSeat: agreedPerSeat,
+        driverPricePerSeat: ride.pricePerSeat,
+        offeredPrice: negotiating ? offeredPrice : null,
+        negotiationStatus: negotiating ? CARPOOL_NEGOTIATION_STATUS.OFFERED : CARPOOL_NEGOTIATION_STATUS.NONE,
+        totalAmount: Math.round(agreedPerSeat * requestedSeats * 100) / 100,
         status: instant ? CARPOOL_BOOKING_STATUS.ACCEPTED : CARPOOL_BOOKING_STATUS.PENDING,
         paymentStatus: payment.paymentStatus,
         isActive: true,
@@ -256,7 +349,10 @@ export const createBooking = async ({ rideId, userId, payload }) => {
     }
 
 
-    notifications.push([instant ? 'CARPOOL_REQUEST_ACCEPTED' : 'CARPOOL_RIDE_REQUEST', { ride, booking }]);
+    notifications.push([
+      instant ? 'CARPOOL_REQUEST_ACCEPTED' : negotiating ? 'CARPOOL_OFFER_RECEIVED' : 'CARPOOL_RIDE_REQUEST',
+      { ride, booking },
+    ]);
 
     return serializeBooking(booking, { ride });
   });
@@ -314,6 +410,10 @@ export const acceptBooking = async ({ bookingId, userId }) => {
     booking.status = CARPOOL_BOOKING_STATUS.ACCEPTED;
     booking.paymentStatus = payment.paymentStatus;
     booking.acceptedAt = new Date();
+
+    if (booking.negotiationStatus === CARPOOL_NEGOTIATION_STATUS.OFFERED) {
+      booking.negotiationStatus = CARPOOL_NEGOTIATION_STATUS.ACCEPTED;
+    }
     booking.seatsHeld = booking.seatCount;
     await booking.save({ session });
 
@@ -346,6 +446,10 @@ export const rejectBooking = async ({ bookingId, userId, reason }) => {
 
     booking.status = CARPOOL_BOOKING_STATUS.REJECTED;
     booking.rejectedAt = new Date();
+
+    if (booking.negotiationStatus === CARPOOL_NEGOTIATION_STATUS.OFFERED) {
+      booking.negotiationStatus = CARPOOL_NEGOTIATION_STATUS.REJECTED;
+    }
     // Clearing isActive frees the partial unique index, so the passenger may
     // request again — perhaps with a pickup the host finds workable.
     booking.isActive = false;

@@ -13,6 +13,11 @@ const EVENTS = {
     title: 'New seat request',
     body: ({ booking }) => `Someone requested ${booking.seatCount} seat(s) on your ride.`,
   },
+  CARPOOL_OFFER_RECEIVED: {
+    to: 'host',
+    title: 'New seat request with an offer',
+    body: ({ booking }) => `Someone offered ₹${booking.offeredPrice} per seat${booking.isDoorToDoor ? ' for a door-to-door trip' : ''}.`,
+  },
   CARPOOL_REQUEST_ACCEPTED: {
     to: 'passenger',
     title: 'Seat confirmed',
