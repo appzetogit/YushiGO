@@ -3,6 +3,17 @@ export const STUDENT_STATUS = Object.freeze({
   INACTIVE: 'INACTIVE',
 });
 
+/**
+ * Admin review of a student's identity. Separate from STUDENT_STATUS, which is
+ * the parent's own active/inactive switch: a student can be active and still
+ * waiting on review.
+ */
+export const STUDENT_VERIFICATION_STATUS = Object.freeze({
+  PENDING: 'PENDING',
+  VERIFIED: 'VERIFIED',
+  REJECTED: 'REJECTED',
+});
+
 export const GUARDIAN_STATUS = Object.freeze({
   ACTIVE: 'ACTIVE',
   INACTIVE: 'INACTIVE',
@@ -41,6 +52,15 @@ export const STUDENT_RIDE_ERRORS = Object.freeze({
   INVALID_DATE_OF_BIRTH: 'INVALID_DATE_OF_BIRTH',
   INVALID_LOCATION: 'INVALID_LOCATION',
   LOCATION_NOT_FOUND: 'LOCATION_NOT_FOUND',
+  STUDENT_NOT_VERIFIED: 'STUDENT_NOT_VERIFIED',
+  INVALID_AADHAAR: 'INVALID_AADHAAR',
+  AADHAAR_PROVIDER_NOT_CONFIGURED: 'AADHAAR_PROVIDER_NOT_CONFIGURED',
+  AADHAAR_NOT_INITIATED: 'AADHAAR_NOT_INITIATED',
+  AADHAAR_VERIFICATION_FAILED: 'AADHAAR_VERIFICATION_FAILED',
+  DOB_LOCKED: 'DOB_LOCKED',
+  TOO_MANY_STUDENTS: 'TOO_MANY_STUDENTS',
+  VEHICLE_NOT_ALLOWED: 'VEHICLE_NOT_ALLOWED',
+  INVALID_REVIEW: 'INVALID_REVIEW',
 });
 
 /**
@@ -132,6 +152,8 @@ export const studentRideConfig = () => ({
   pickupOtpExpirySeconds: numberFromEnv('STUDENT_RIDE_PICKUP_OTP_EXPIRY_SECONDS', 3 * 60 * 60),
   otpMaxAttempts: numberFromEnv('STUDENT_RIDE_OTP_MAX_ATTEMPTS', 5),
   shareTokenExpiryHours: numberFromEnv('STUDENT_RIDE_SHARE_TTL_HOURS', 12),
+  // Hard ceiling on siblings in one booking; the admin setting may lower it.
+  maxChildrenPerRide: numberFromEnv('STUDENT_RIDE_MAX_CHILDREN', 4),
 });
 
 export const STUDENT_RIDE_ERROR_CODES = Object.freeze({

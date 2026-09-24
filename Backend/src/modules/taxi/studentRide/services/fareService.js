@@ -2,6 +2,8 @@ import { resolveSetPriceForRide } from '../../services/rideService.js';
 import { Vehicle } from '../../admin/models/Vehicle.js';
 import { STUDENT_RIDE_ERROR_CODES } from '../constants/index.js';
 import { studentRideError } from './studentService.js';
+import { vehicleAllowedForStudentRide } from './studentRideSettings.js';
+import { STUDENT_RIDE_ERRORS } from '../constants/index.js';
 
 /**
  * Fare for a student ride.
@@ -72,13 +74,24 @@ export const quoteStudentRideFare = async ({
     );
   }
 
-  const vehicle = await Vehicle.findById(vehicleTypeId).select('name service_tax').lean();
+  const vehicle = await Vehicle.findById(vehicleTypeId)
+    .select('name service_tax icon_types category allowed_for_student_ride')
+    .lean();
 
   if (!vehicle) {
     throw studentRideError(
       422,
       STUDENT_RIDE_ERROR_CODES.RIDE_NOT_FOUND,
       'vehicle_type_id does not match a known vehicle type.',
+    );
+  }
+
+  // Quote and booking both come through here, so this one check covers both.
+  if (vehicle && !vehicleAllowedForStudentRide(vehicle)) {
+    throw studentRideError(
+      422,
+      STUDENT_RIDE_ERRORS.VEHICLE_NOT_ALLOWED,
+      `${vehicle.name || 'This vehicle type'} cannot be used for student rides.`,
     );
   }
 

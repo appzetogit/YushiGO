@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { StudentSavedLocation } from '../models/StudentSavedLocation.js';
 import { SAVED_LOCATION_LABELS, STUDENT_RIDE_ERRORS } from '../constants/index.js';
 import { requireOwnedStudent, studentRideError } from './studentService.js';
+import { assertStudentVerified } from './studentIdentityService.js';
 
 export const serializeSavedLocation = (location) => ({
   id: String(location._id),
@@ -143,6 +144,7 @@ export const getSavedLocation = async ({ locationId, userId }) => {
 
 export const createSavedLocation = async ({ studentId, userId, payload }) => {
   const student = await requireOwnedStudent({ studentId, userId }, { allowInactive: true });
+  assertStudentVerified(student);
   const input = normalizeLocationInput(payload);
 
   const location = await StudentSavedLocation.create({
@@ -156,6 +158,7 @@ export const createSavedLocation = async ({ studentId, userId, payload }) => {
 
 export const updateSavedLocation = async ({ locationId, userId, payload }) => {
   const location = await requireOwnedSavedLocation({ locationId, userId });
+  assertStudentVerified(await requireOwnedStudent({ studentId: location.studentId, userId }, { allowInactive: true }));
   const input = normalizeLocationInput(payload, { partial: true });
 
   Object.assign(location, input);

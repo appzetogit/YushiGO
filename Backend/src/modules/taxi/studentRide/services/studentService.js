@@ -11,6 +11,7 @@ import {
   STUDENT_RIDE_ERRORS,
   STUDENT_STATUS,
 } from '../constants/index.js';
+import { applyIdentityInput, resetReview, serializeIdentity } from './studentIdentityService.js';
 
 /**
  * Attach a stable machine-readable code to an ApiError without changing the
@@ -89,12 +90,14 @@ export const serializeStudent = (student, { guardianCount = undefined } = {}) =>
   dateOfBirth: student.dateOfBirth,
   age: calculateAge(student.dateOfBirth),
   isMinor: isMinor(student.dateOfBirth),
+  ageCategory: isMinor(student.dateOfBirth) ? 'child' : 'adult',
   gender: student.gender || '',
   schoolName: student.schoolName || '',
   className: student.className || '',
   phone: student.phone || '',
   countryCode: student.countryCode || '',
   status: student.status,
+  ...serializeIdentity(student),
   ...(guardianCount === undefined ? {} : { guardianCount }),
   createdAt: student.createdAt,
   updatedAt: student.updatedAt,
@@ -112,7 +115,7 @@ export const requireOwnedStudent = async (
     throw studentRideError(404, STUDENT_RIDE_ERRORS.STUDENT_NOT_FOUND, 'Student not found.');
   }
 
-  const query = Student.findOne({ _id: studentId, deletedAt: null });
+  const query = Student.findOne({ _id: studentId, deletedAt: null }).select('+aadhaar.lookup');
 
   if (session) {
     query.session(session);
@@ -205,10 +208,16 @@ export const createStudent = async ({ userId, payload }) => {
   try {
     session.startTransaction();
 
+    const draft = new Student({ userId, name, dateOfBirth });
+    applyIdentityInput(draft, payload || {});
+
     const [student] = await Student.create([{
       userId,
       name,
       dateOfBirth,
+      aadhaar: draft.aadhaar,
+      studentIdNumber: draft.studentIdNumber,
+      studentIdPhotoUrl: draft.studentIdPhotoUrl,
       profilePhotoUrl: String(payload?.profilePhotoUrl || '').trim(),
       gender: String(payload?.gender || '').trim().toLowerCase(),
       schoolName: String(payload?.schoolName || payload?.school_name || '').trim(),
@@ -285,6 +294,7 @@ export const getStudent = async ({ studentId, userId }) => {
 
 export const updateStudent = async ({ studentId, userId, payload }) => {
   const student = await requireOwnedStudent({ studentId, userId }, { allowInactive: true });
+  let identityChanged = false;
 
   if (payload?.name !== undefined) {
     const name = String(payload.name || '').trim();
@@ -293,11 +303,25 @@ export const updateStudent = async ({ studentId, userId, payload }) => {
       throw studentRideError(422, STUDENT_RIDE_ERRORS.INVALID_DATE_OF_BIRTH, 'Student name cannot be empty.');
     }
 
+    identityChanged = identityChanged || name !== student.name;
     student.name = name;
   }
 
   if (payload?.dateOfBirth !== undefined || payload?.date_of_birth !== undefined) {
     const dateOfBirth = parseDateOfBirth(payload.dateOfBirth ?? payload.date_of_birth);
+    const unchanged = student.dateOfBirth && dateOfBirth.getTime() === new Date(student.dateOfBirth).getTime();
+
+    // Once Aadhaar has supplied the date of birth, the app cannot overwrite it.
+    // An edit form re-posting the same value is fine; a different one is refused.
+    if (student.aadhaar?.verified && !unchanged) {
+      throw studentRideError(
+        409,
+        STUDENT_RIDE_ERRORS.DOB_LOCKED,
+        'The date of birth comes from the verified Aadhaar and cannot be edited.',
+      );
+    }
+
+    identityChanged = identityChanged || !unchanged;
 
     // Editing the DOB can pull a student below 18. Refuse rather than leave a
     // minor on file with no guardian.
@@ -327,6 +351,14 @@ export const updateStudent = async ({ studentId, userId, payload }) => {
     if (value !== undefined) {
       student[field] = String(value || '').trim();
     }
+  }
+
+  identityChanged = applyIdentityInput(student, payload || {}) || identityChanged;
+
+  // An approval covers the details that were reviewed; changing them sends the
+  // student back for review. School, class and photo edits do not.
+  if (identityChanged) {
+    resetReview(student);
   }
 
   await student.save();

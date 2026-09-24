@@ -108,6 +108,11 @@ const vehicleSchema = new mongoose.Schema(
      * What a delivery vehicle can carry. Empty means no limit, so a vehicle type
      * nobody has configured keeps accepting every parcel, as it did before.
      */
+    /**
+     * Whether student rides may use this vehicle type. null = decide by type:
+     * two-wheelers are refused, everything else allowed.
+     */
+    allowed_for_student_ride: { type: Boolean, default: null },
     parcel_limits: {
       max_weight_kg: { type: Number, default: null, min: 0 },
       max_size: {

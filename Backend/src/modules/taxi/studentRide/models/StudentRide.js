@@ -47,10 +47,17 @@ const studentRideSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // The first (or only) child. Kept so every existing reader keeps working.
     studentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'TaxiStudent',
       required: true,
+      index: true,
+    },
+    // Every child on this ride, studentId included. One ride, one set of codes.
+    studentIds: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'TaxiStudent' }],
+      default: undefined,
       index: true,
     },
     /**

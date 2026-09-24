@@ -70,7 +70,8 @@ export const listStudentRidesForAdmin = async (query = {}) => {
   }
 
   if (query.studentId && mongoose.Types.ObjectId.isValid(String(query.studentId))) {
-    filter.studentId = query.studentId;
+    // $and so it combines with the bypassed $or instead of replacing it.
+    filter.$and = [{ $or: [{ studentId: query.studentId }, { studentIds: query.studentId }] }];
   }
 
   if (query.userId && mongoose.Types.ObjectId.isValid(String(query.userId))) {

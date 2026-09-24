@@ -8,6 +8,9 @@ import * as fareService from '../services/fareService.js';
 import * as adminStudentRideService from '../services/adminStudentRideService.js';
 import * as emergencyService from '../services/emergencyService.js';
 import * as notifications from '../services/studentRideNotifications.js';
+import { applyMultiChildFare, vehicleAllowedForStudentRide } from '../services/studentRideSettings.js';
+import * as aadhaarService from '../services/aadhaarService.js';
+import * as adminStudentVerificationService from '../services/adminStudentVerificationService.js';
 
 export const listStudents = async (req, res) => {
   const students = await studentService.listStudents({
@@ -154,12 +157,12 @@ export const deleteSavedLocation = async (req, res) => {
  * same function the booking uses, so the quote and the charge cannot drift.
  */
 export const quoteStudentRide = async (req, res) => {
-  const { pickup, destination } = await rideService.resolveRideEndpointsForQuote({
+  const { pickup, destination, students, settings } = await rideService.resolveRideEndpointsForQuote({
     userId: req.auth.sub,
     payload: req.body,
   });
 
-  const quote = await fareService.quoteStudentRideFare({
+  const single = await fareService.quoteStudentRideFare({
     vehicleTypeId: req.body?.vehicle_type_id ?? req.body?.vehicleTypeId,
     pickup,
     destination,
@@ -167,6 +170,8 @@ export const quoteStudentRide = async (req, res) => {
     zoneId: req.body?.zone_id || null,
     distanceMeters: req.body?.estimated_distance_meters ?? req.body?.estimatedDistanceMeters,
   });
+
+  const quote = applyMultiChildFare(single, students.length, settings);
 
   res.json({ success: true, data: quote });
 };
@@ -363,5 +368,91 @@ export const adminGetStudentRide = async (req, res) => {
 
 export const adminListEmergencies = async (req, res) => {
   const data = await adminStudentRideService.listEmergenciesForAdmin(req.query);
+  res.json({ success: true, data });
+};
+
+// --- Identity: Aadhaar through the KYC provider -----------------------------
+
+export const initiateAadhaar = async (req, res) => {
+  const data = await aadhaarService.initiateAadhaarVerification({ userId: req.auth.sub, payload: req.body });
+  res.json({ success: true, data });
+};
+
+export const verifyAadhaar = async (req, res) => {
+  const student = await aadhaarService.verifyAadhaarOtp({ userId: req.auth.sub, payload: req.body });
+  res.json({ success: true, data: { student } });
+};
+
+// --- Vehicles a student ride may use ----------------------------------------
+
+/** Taxi vehicle types allowed for student rides — two-wheelers never appear. */
+export const listStudentVehicleTypes = async (_req, res) => {
+  const { Vehicle } = await import('../../admin/models/Vehicle.js');
+  const vehicles = await Vehicle.find({ transport_type: { $in: ['taxi', 'both'] }, status: 1 })
+    .select('name short_description icon_types image map_icon capacity category allowed_for_student_ride')
+    .lean();
+
+  const results = vehicles.filter(vehicleAllowedForStudentRide).map((vehicle) => ({
+    vehicleTypeId: String(vehicle._id),
+    name: vehicle.name,
+    description: vehicle.short_description || '',
+    iconType: vehicle.icon_types || '',
+    icon: vehicle.map_icon || vehicle.image || '',
+    capacity: vehicle.capacity || 0,
+  }));
+
+  res.json({ success: true, data: { results } });
+};
+
+// --- Carpools on the same route ----------------------------------------------
+
+/**
+ * Carpool rides along the student's route, from verified vehicles only.
+ * The same corridor matching as the carpool search, including its women-only
+ * rules for the parent's account.
+ */
+export const listCarpoolSuggestions = async (req, res) => {
+  const { searchRides } = await import('../../carpool/services/carpoolRideService.js');
+  const query = {
+    from_lat: req.query.from_lat ?? req.query.pickup_lat,
+    from_lng: req.query.from_lng ?? req.query.pickup_lng,
+    to_lat: req.query.to_lat ?? req.query.drop_lat,
+    to_lng: req.query.to_lng ?? req.query.drop_lng,
+    date: req.query.date,
+    passengers: req.query.passengers,
+  };
+
+  const rides = await searchRides({ userId: req.auth.sub, query });
+  const results = rides.filter((ride) => ride.vehicle?.verified);
+
+  res.json({ success: true, data: { results } });
+};
+
+// --- Admin: student verification --------------------------------------------
+
+export const adminListStudents = async (req, res) => {
+  const data = await adminStudentVerificationService.listStudentsForAdmin(req.query);
+  res.json({ success: true, data });
+};
+
+export const adminGetStudent = async (req, res) => {
+  const data = await adminStudentVerificationService.getStudentForAdmin(req.params.studentId);
+  res.json({ success: true, data });
+};
+
+export const adminApproveStudent = async (req, res) => {
+  const data = await adminStudentVerificationService.approveStudent({
+    studentId: req.params.studentId,
+    adminId: req.auth.sub,
+  });
+  res.json({ success: true, data });
+};
+
+export const adminRejectStudent = async (req, res) => {
+  const data = await adminStudentVerificationService.rejectStudent({
+    studentId: req.params.studentId,
+    adminId: req.auth.sub,
+    reason: req.body?.reason,
+  });
   res.json({ success: true, data });
 };

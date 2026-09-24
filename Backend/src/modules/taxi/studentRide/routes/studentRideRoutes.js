@@ -25,6 +25,9 @@ const asUser = authenticate(['user']);
 // Students
 studentRideRouter.get('/student-ride/students', asUser, asyncHandler(studentController.listStudents));
 studentRideRouter.post('/student-ride/students', asUser, asyncHandler(studentController.createStudent));
+// Aadhaar — literal paths, declared before /students/:studentId.
+studentRideRouter.post('/student-ride/students/aadhar/initiate', otpSendRateLimit, asUser, asyncHandler(studentController.initiateAadhaar));
+studentRideRouter.post('/student-ride/students/aadhar/verify', otpVerifyRateLimit, asUser, asyncHandler(studentController.verifyAadhaar));
 studentRideRouter.get('/student-ride/students/:studentId', asUser, asyncHandler(studentController.getStudent));
 studentRideRouter.patch('/student-ride/students/:studentId', asUser, asyncHandler(studentController.updateStudent));
 studentRideRouter.delete('/student-ride/students/:studentId', asUser, asyncHandler(studentController.deactivateStudent));
@@ -48,6 +51,8 @@ studentRideRouter.post('/student-ride/rides/quote', asUser, asyncHandler(student
 studentRideRouter.post('/student-ride/rides', asUser, asyncHandler(studentController.createStudentRide));
 studentRideRouter.get('/student-ride/rides', asUser, asyncHandler(studentController.listStudentRides));
 studentRideRouter.get('/student-ride/rides/upcoming', asUser, asyncHandler(studentController.listUpcomingStudentRides));
+studentRideRouter.get('/student-ride/rides/carpool-suggestions', asUser, asyncHandler(studentController.listCarpoolSuggestions));
+studentRideRouter.get('/student-ride/vehicle-types', asUser, asyncHandler(studentController.listStudentVehicleTypes));
 studentRideRouter.get('/student-ride/rides/:studentRideId', asUser, asyncHandler(studentController.getStudentRide));
 studentRideRouter.post('/student-ride/rides/:studentRideId/cancel', asUser, asyncHandler(studentController.cancelStudentRide));
 studentRideRouter.post('/student-ride/rides/:studentRideId/otp/:kind/reissue', otpSendRateLimit, asUser, asyncHandler(studentController.reissueRideOtp));
@@ -100,3 +105,9 @@ const asAdmin = authenticate(['admin']);
 studentRideRouter.get('/admin/student-rides', asAdmin, asyncHandler(studentController.adminListStudentRides));
 studentRideRouter.get('/admin/student-rides/emergencies', asAdmin, asyncHandler(studentController.adminListEmergencies));
 studentRideRouter.get('/admin/student-rides/:studentRideId', asAdmin, asyncHandler(studentController.adminGetStudentRide));
+
+// Student verification — the booking gate is opened here.
+studentRideRouter.get('/admin/students', asAdmin, asyncHandler(studentController.adminListStudents));
+studentRideRouter.get('/admin/students/:studentId', asAdmin, asyncHandler(studentController.adminGetStudent));
+studentRideRouter.post('/admin/students/:studentId/approve', asAdmin, asyncHandler(studentController.adminApproveStudent));
+studentRideRouter.post('/admin/students/:studentId/reject', asAdmin, asyncHandler(studentController.adminRejectStudent));

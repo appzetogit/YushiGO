@@ -120,6 +120,8 @@ import {
   getMailSettings,
   getMapSettings,
   getRechargeApiSettings,
+  getKycSettings,
+  updateKycSettings,
   getNearbyServiceLocations,
   getNotificationChannels,
   getOngoingRides,
@@ -510,6 +512,8 @@ adminRouter.get('/admin/integration-settings/map', getMapSettings);
 adminRouter.patch('/admin/integration-settings/map', updateMapSettings);
 adminRouter.get('/admin/integration-settings/mail', getMailSettings);
 adminRouter.patch('/admin/integration-settings/mail', updateMailSettings);
+adminRouter.get('/admin/integration-settings/kyc', getKycSettings);
+adminRouter.patch('/admin/integration-settings/kyc', updateKycSettings);
 adminRouter.get('/admin/integration-settings/recharge-api', getRechargeApiSettings);
 adminRouter.patch('/admin/integration-settings/recharge-api', updateRechargeApiSettings);
 adminRouter.post('/admin/integration-settings/recharge-api/generate-token', generateRechargeApiToken);

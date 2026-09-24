@@ -11,6 +11,8 @@ import {
   studentRideConfig,
 } from '../constants/index.js';
 import { requireOwnedStudent, studentRideError } from './studentService.js';
+import { assertStudentVerified } from './studentIdentityService.js';
+import { applyMultiChildFare, getStudentRideSettings } from './studentRideSettings.js';
 import { requireOwnedSavedLocation } from './savedLocationService.js';
 import { issueOtp, serializeOtpState, verifyOtp } from './otpService.js';
 import { listEmergencyContacts } from './guardianService.js';
@@ -104,13 +106,26 @@ const EVENT_FOR_STATUS = Object.freeze({
   FAILED: STUDENT_RIDE_EVENTS.RIDE_CANCELLED,
 });
 
-export const serializeStudentRide = (ride, { student = null, timeline = null } = {}) => ({
+const studentCard = (student) => ({
+  id: String(student._id),
+  name: student.name,
+  profilePhotoUrl: student.profilePhotoUrl || '',
+});
+
+/** Every child on the ride. Rides booked before multi-child have only studentId. */
+const rideStudentIds = (ride) => (ride.studentIds?.length ? ride.studentIds : [ride.studentId])
+  .map((entry) => String(entry?._id || entry));
+
+export const serializeStudentRide = (ride, { student = null, students = null, timeline = null } = {}) => ({
   studentRideId: String(ride._id),
   rideId: String(ride.rideId),
   status: ride.status,
+  // The first child — unchanged shape for apps that know one child per ride.
   student: student
-    ? { id: String(student._id), name: student.name, profilePhotoUrl: student.profilePhotoUrl || '' }
-    : { id: String(ride.studentId) },
+    ? studentCard(student)
+    : { id: String(ride.studentId?._id || ride.studentId) },
+  studentIds: rideStudentIds(ride),
+  ...(students ? { students: students.map(studentCard) } : {}),
   pickup: ride.pickup,
   destination: ride.destination,
   scheduledAt: ride.scheduledAt,
@@ -238,12 +253,19 @@ const snapshotFromPayload = (value, field) => {
  * before use, so one student's address cannot be attached to another's ride
  * (§62). Either way the result is a snapshot, not a reference.
  */
-const resolveEndpoint = async ({ savedLocationId, inline, studentId, userId, field, session }) => {
+const resolveEndpoint = async ({ savedLocationId, inline, studentId, studentIds = null, userId, field, session }) => {
   if (savedLocationId) {
+    const siblings = studentIds && studentIds.length > 1;
     const location = await requireOwnedSavedLocation(
-      { locationId: savedLocationId, studentId, userId },
+      { locationId: savedLocationId, studentId: siblings ? null : studentId, userId },
       { session },
     );
+
+    // With several children, a saved location of any of them may be used — home
+    // is usually shared — but never one belonging to a child not on the ride.
+    if (siblings && !studentIds.some((id) => String(id) === String(location.studentId))) {
+      throw studentRideError(404, 'LOCATION_NOT_FOUND', 'Saved location not found.');
+    }
 
     return snapshotFromSavedLocation(location);
   }
@@ -260,6 +282,36 @@ const resolveEndpoint = async ({ savedLocationId, inline, studentId, userId, fie
 };
 
 /**
+ * The children a booking or quote is for: `student_ids` for several, or the
+ * original `student_id`. Each must belong to the caller, be active, and be
+ * verified — the booking gate.
+ */
+const resolveBookingStudents = async ({ userId, payload }) => {
+  const settings = await getStudentRideSettings();
+  const many = payload?.student_ids ?? payload?.studentIds;
+  const requested = Array.isArray(many) && many.length ? many : [payload?.student_id ?? payload?.studentId];
+  const ids = [...new Set(requested.map((id) => String(id || '')))];
+
+  if (ids.length > settings.maxChildrenPerRide) {
+    throw studentRideError(
+      422,
+      'TOO_MANY_STUDENTS',
+      `At most ${settings.maxChildrenPerRide} students can share one ride.`,
+    );
+  }
+
+  const students = [];
+
+  for (const studentId of ids) {
+    const student = await requireOwnedStudent({ studentId, userId });
+    assertStudentVerified(student);
+    students.push(student);
+  }
+
+  return { students, settings };
+};
+
+/**
  * Book a student ride.
  *
  * `createDispatchRide` is injected so this service does not import the taxi ride
@@ -267,7 +319,9 @@ const resolveEndpoint = async ({ savedLocationId, inline, studentId, userId, fie
  * and lets the tests exercise the whole flow without a dispatcher running.
  */
 export const createStudentRide = async ({ userId, payload, createDispatchRide }) => {
-  const student = await requireOwnedStudent({ studentId: payload?.student_id ?? payload?.studentId, userId });
+  const { students, settings } = await resolveBookingStudents({ userId, payload });
+  const student = students[0];
+  const studentIds = students.map((entry) => entry._id);
 
   const scheduledAt = payload?.scheduled_at ?? payload?.scheduledAt
     ? new Date(payload.scheduled_at ?? payload.scheduledAt)
@@ -287,6 +341,7 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
         savedLocationId: payload?.pickup_saved_location_id ?? payload?.pickupSavedLocationId,
         inline: payload?.pickup,
         studentId: student._id,
+        studentIds,
         userId,
         field: 'pickup',
         session,
@@ -296,6 +351,7 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
         savedLocationId: payload?.destination_saved_location_id ?? payload?.destinationSavedLocationId,
         inline: payload?.destination ?? payload?.drop,
         studentId: student._id,
+        studentIds,
         userId,
         field: 'destination',
         session,
@@ -310,14 +366,15 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
        * or unpriced vehicle type fails the booking outright rather than
        * producing a ride nobody can be paid for.
        */
-      const quote = await quoteStudentRideFare({
+      // Several children: one ride, priced by the admin's multi-child rule.
+      const quote = applyMultiChildFare(await quoteStudentRideFare({
         vehicleTypeId: payload?.vehicle_type_id ?? payload?.vehicleTypeId,
         pickup,
         destination,
         serviceLocationId: payload?.service_location_id || null,
         zoneId: payload?.zone_id || null,
         distanceMeters: payload?.estimated_distance_meters ?? payload?.estimatedDistanceMeters,
-      });
+      }), students.length, settings);
 
       // The dispatch ride is created first: without it there is nothing for a
       // driver to be matched to, and a student ride with no ride would be an
@@ -329,7 +386,7 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
         scheduledAt,
         payload,
         quote,
-        studentName: student.name,
+        studentName: students.length > 1 ? `${student.name} +${students.length - 1}` : student.name,
         session,
       });
 
@@ -341,6 +398,7 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
       const [studentRide] = await StudentRide.create([{
         userId,
         studentId: student._id,
+        studentIds,
         rideId: dispatchRide._id,
         pickup,
         destination,
@@ -377,7 +435,8 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
     });
 
     return {
-      ...serializeStudentRide(created.ride, { student: created.student }),
+      ...serializeStudentRide(created.ride, { student: created.student, students }),
+      multiChild: created.quote.multiChild,
       fare: created.quote.fare,
       fareBreakdown: created.quote.breakdown,
       distanceMeters: created.quote.distanceMeters,
@@ -769,16 +828,18 @@ export const cancelStudentRide = async ({ studentRideId, userId, reason, cancelD
 
 export const getStudentRide = async ({ studentRideId, userId }) => {
   const ride = await requireOwnedStudentRide({ studentRideId, userId });
-  const [student, events, dispatchSummary] = await Promise.all([
+  const [student, events, dispatchSummary, students] = await Promise.all([
     Student.findById(ride.studentId),
     StudentRideEvent.find({ studentRideId: ride._id }).sort({ createdAt: 1 }),
     buildDispatchSummary(ride.rideId),
+    Student.find({ _id: { $in: rideStudentIds(ride) } }).select('name profilePhotoUrl'),
   ]);
 
   return {
     ...(dispatchSummary || {}),
     ...serializeStudentRide(ride, {
     student,
+    students,
     timeline: events.map((event) => ({
       eventType: event.eventType,
       oldStatus: event.oldStatus || '',
@@ -794,7 +855,8 @@ export const listStudentRides = async ({ userId, studentId, status, upcoming }) 
   const filter = { userId };
 
   if (studentId) {
-    filter.studentId = studentId;
+    // A child's rides include the ones shared with siblings.
+    filter.$or = [{ studentId }, { studentIds: studentId }];
   }
 
   if (status) {
@@ -818,11 +880,15 @@ export const listStudentRides = async ({ userId, studentId, status, upcoming }) 
   const rides = await StudentRide.find(filter)
     .sort(upcoming ? { scheduledAt: 1, createdAt: 1 } : { createdAt: -1 })
     .limit(100)
-    .populate('studentId', 'name profilePhotoUrl');
+    .populate('studentId', 'name profilePhotoUrl')
+    .populate('studentIds', 'name profilePhotoUrl');
 
   return Promise.all(rides.map(async (ride) => ({
     ...((await buildDispatchSummary(ride.rideId)) || {}),
-    ...serializeStudentRide(ride, { student: ride.studentId }),
+    ...serializeStudentRide(ride, {
+      student: ride.studentId,
+      students: ride.studentIds?.length ? ride.studentIds.filter(Boolean) : [ride.studentId].filter(Boolean),
+    }),
   })));
 };
 
@@ -841,15 +907,15 @@ export const getRideEmergencyContacts = async (studentRideId) => {
  * caller cannot price against another student's saved locations.
  */
 export const resolveRideEndpointsForQuote = async ({ userId, payload }) => {
-  const student = await requireOwnedStudent({
-    studentId: payload?.student_id ?? payload?.studentId,
-    userId,
-  });
+  const { students, settings } = await resolveBookingStudents({ userId, payload });
+  const student = students[0];
+  const studentIds = students.map((entry) => entry._id);
 
   const pickup = await resolveEndpoint({
     savedLocationId: payload?.pickup_saved_location_id ?? payload?.pickupSavedLocationId,
     inline: payload?.pickup,
     studentId: student._id,
+    studentIds,
     userId,
     field: 'pickup',
     session: null,
@@ -859,10 +925,11 @@ export const resolveRideEndpointsForQuote = async ({ userId, payload }) => {
     savedLocationId: payload?.destination_saved_location_id ?? payload?.destinationSavedLocationId,
     inline: payload?.destination ?? payload?.drop,
     studentId: student._id,
+    studentIds,
     userId,
     field: 'destination',
     session: null,
   });
 
-  return { student, pickup, destination };
+  return { student, students, settings, pickup, destination };
 };

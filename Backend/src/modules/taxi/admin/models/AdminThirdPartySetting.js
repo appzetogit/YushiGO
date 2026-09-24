@@ -14,6 +14,8 @@ const adminThirdPartySettingSchema = new mongoose.Schema(
     sms: { type: mongoose.Schema.Types.Mixed, default: {} }, // Changed to Object
     payment: { type: mongoose.Schema.Types.Mixed, default: {} }, // Changed to Object
     recharge_api: { type: mongoose.Schema.Types.Mixed, default: {} },
+    // Identity verification providers, e.g. kyc.aadhaar = { enabled, provider, surepass: { base_url, token } }.
+    kyc: { type: mongoose.Schema.Types.Mixed, default: {} },
     notification_channels: { type: [mongoose.Schema.Types.Mixed], default: [] },
   },
   {

@@ -50,6 +50,13 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}/api/v1`;
 
 const tokenFor = (sub) => signAccessToken({ sub: String(sub), role: 'user' });
+
+const adminId = new mongoose.Types.ObjectId();
+await mongoose.connection.collection('taxiadmins').insertOne({
+  _id: adminId, name: 'Ops', email: 'ops@test.local', role: 'superadmin',
+  admin_type: 'superadmin', permissions: ['*'], active: true,
+});
+const adminToken = signAccessToken({ sub: String(adminId), role: 'admin' });
 const hostToken = tokenFor(hostId);
 const riderToken = tokenFor(riderId);
 const outsiderToken = tokenFor(outsiderId);
@@ -410,6 +417,36 @@ await check("another user cannot read someone else's student", async () => {
   const { status, body } = await call('GET', `/student-ride/students/${studentId}`, { token: hostToken });
   if (status !== 404) throw new Error(`expected 404, got ${status}`);
   if (body?.code !== 'STUDENT_NOT_FOUND') throw new Error(`code ${body?.code}`);
+});
+
+await check('a new student is PENDING and cannot add a saved location yet', async () => {
+  const { body: got } = await call('GET', `/student-ride/students/${studentId}`, { token: riderToken });
+  if (got.data.student.verificationStatus !== 'PENDING') throw new Error(`status ${got.data.student.verificationStatus}`);
+
+  const { status, body } = await call('POST', `/student-ride/students/${studentId}/locations`, {
+    token: riderToken,
+    body: { label: 'HOME', address: 'Sector 36', latitude: 28.46, longitude: 77.51 },
+  });
+  if (status !== 403 || body?.code !== 'STUDENT_NOT_VERIFIED') throw new Error(`${status} ${body?.code}`);
+});
+
+await check('a user token cannot reach the admin student review', async () => {
+  const { status } = await call('GET', '/admin/students?status=PENDING', { token: riderToken });
+  if (status !== 401 && status !== 403) throw new Error(`expected 401/403, got ${status}`);
+});
+
+await check('admin lists pending students and approves one over HTTP', async () => {
+  const { status, body } = await call('GET', '/admin/students?status=PENDING', { token: adminToken });
+  if (status !== 200) throw new Error(`list ${status} ${body?.message}`);
+  if (!body.data.results.some((s) => s.id === studentId)) throw new Error('student not in the pending list');
+
+  const rejectWithoutReason = await call('POST', `/admin/students/${studentId}/reject`, { token: adminToken, body: {} });
+  if (rejectWithoutReason.status !== 422) throw new Error(`reject without reason ${rejectWithoutReason.status}`);
+
+  const approved = await call('POST', `/admin/students/${studentId}/approve`, { token: adminToken });
+  if (approved.status !== 200 || approved.body.data.verificationStatus !== 'VERIFIED') {
+    throw new Error(`approve ${approved.status} ${approved.body?.message}`);
+  }
 });
 
 await check('POST a saved location returns 201', async () => {

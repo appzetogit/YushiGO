@@ -5,6 +5,7 @@
  *   node tests/studentRide/gate2.mjs
  */
 import mongoose from 'mongoose';
+import { approveStudent } from './_helpers.mjs';
 
 const DB_NAME = `student_ride_g2_${Date.now()}`;
 process.env.MONGODB_URI = process.env.STUDENT_RIDE_TEST_URI
@@ -70,6 +71,7 @@ const student = await studentService.createStudent({
     guardians: [{ name: 'Varun', mobile: '9876543210', relationship: 'FATHER' }],
   },
 });
+await approveStudent(student.id);
 
 const home = await locationService.createSavedLocation({
   studentId: student.id, userId: parent,
@@ -172,6 +174,7 @@ await expectReject('a location belonging to another student is refused', 'LOCATI
       guardians: [{ name: 'Varun', mobile: '9876543210', relationship: 'FATHER' }],
     },
   });
+  await approveStudent(sibling.id);
   return rideService.createStudentRide({
     userId: parent,
     payload: {

@@ -6541,7 +6541,7 @@ export const listVehicleTypes = async (queryParams = {}) => {
       : { $in: [normalizedTransportType, 'both'] };
   }
   const items = await Vehicle.find(query)
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active createdAt updatedAt')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean();
   const results = items.map((item) => ({
@@ -6665,7 +6665,7 @@ export const listPublicVehicleCatalog = async () => {
   }
 
   const items = await Vehicle.find()
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -6727,6 +6727,13 @@ export const listVehiclePreferences = async () => {
   return listPreferences();
 };
 
+/** true / false, or null to decide by vehicle type (two-wheelers refused). */
+const normalizeStudentRideFlag = (value) => {
+  if (value === true || value === 'true' || value === 1 || value === '1') return true;
+  if (value === false || value === 'false' || value === 0 || value === '0') return false;
+  return null;
+};
+
 /** Parcel carrying limits for a delivery vehicle type; blank means unlimited. */
 const normalizeParcelLimits = (limits = {}) => {
   const weight = Number(limits?.max_weight_kg);
@@ -6773,6 +6780,7 @@ export const createVehicleType = async (payload) => {
     parcel_limits: ['delivery', 'both'].includes(transportType)
       ? normalizeParcelLimits(payload.parcel_limits)
       : normalizeParcelLimits(),
+    allowed_for_student_ride: normalizeStudentRideFlag(payload.allowed_for_student_ride),
     service_tax: ['delivery', 'both'].includes(transportType)
       ? normalizeDeliveryServiceTax(payload.service_tax)
       : 0,
@@ -6854,6 +6862,9 @@ export const updateVehicleType = async (id, payload) => {
     vehicle.delivery_distance_pricing = ['delivery', 'both'].includes(vehicle.transport_type)
       ? normalizeDeliveryDistancePricing(payload.delivery_distance_pricing, vehicle.delivery_distance_pricing)
       : normalizeDeliveryDistancePricing();
+  }
+  if (payload.allowed_for_student_ride !== undefined) {
+    vehicle.allowed_for_student_ride = normalizeStudentRideFlag(payload.allowed_for_student_ride);
   }
   if (payload.parcel_limits !== undefined || payload.transport_type !== undefined) {
     vehicle.parcel_limits = ['delivery', 'both'].includes(vehicle.transport_type)
@@ -10704,6 +10715,67 @@ export const updateMailSettings = async (payload) => {
   return { settings: settings.mail };
 };
 
+/** Secrets are shown masked; sending the mask back leaves the stored value alone. */
+const maskSecret = (value) => {
+  const text = String(value || '');
+  return text ? `••••${text.slice(-4)}` : '';
+};
+
+const isMasked = (value) => String(value || '').startsWith('••••');
+
+export const getKycSettings = async () => {
+  const settings = await ensureThirdPartySettings();
+  const aadhaar = settings.kyc?.aadhaar || {};
+
+  return {
+    settings: {
+      aadhaar: {
+        enabled: Boolean(aadhaar.enabled),
+        provider: aadhaar.provider || '',
+        surepass: {
+          base_url: aadhaar.surepass?.base_url || '',
+          token: maskSecret(aadhaar.surepass?.token),
+        },
+        sandbox: aadhaar.sandbox || {},
+      },
+      providers: ['surepass', 'sandbox'],
+    },
+  };
+};
+
+export const updateKycSettings = async (payload = {}) => {
+  const settings = await ensureThirdPartySettings();
+  const current = settings.kyc?.aadhaar || {};
+  const incoming = payload.aadhaar || {};
+  const provider = String(incoming.provider ?? current.provider ?? '').toLowerCase();
+
+  if (provider && !['surepass', 'sandbox'].includes(provider)) {
+    throw new ApiError(422, 'provider must be surepass or sandbox');
+  }
+
+  const incomingToken = incoming.surepass?.token;
+
+  settings.kyc = {
+    ...(settings.kyc || {}),
+    aadhaar: {
+      ...current,
+      enabled: incoming.enabled === undefined ? Boolean(current.enabled) : Boolean(incoming.enabled),
+      provider,
+      surepass: {
+        base_url: String(incoming.surepass?.base_url ?? current.surepass?.base_url ?? '').trim(),
+        token: incomingToken === undefined || isMasked(incomingToken)
+          ? current.surepass?.token || ''
+          : String(incomingToken || '').trim(),
+      },
+      sandbox: incoming.sandbox ?? current.sandbox ?? {},
+    },
+  };
+  settings.markModified('kyc');
+  await settings.save();
+
+  return getKycSettings();
+};
+
 export const getRechargeApiSettings = async () => {
   const settings = await ensureThirdPartySettings();
   return buildRechargeApiResponse(settings.recharge_api || {});
@@ -11100,6 +11172,8 @@ const businessSettingsCategoryMap = {
   'bid-ride': 'bid_ride',
   general: 'general',
   'user-home-management': 'user_home_settings',
+  'student-ride': 'student_ride',
+  carpool: 'carpool',
 };
 
 const appSettingsCategoryMap = {

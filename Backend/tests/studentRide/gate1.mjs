@@ -8,6 +8,7 @@
  * application data.
  */
 import mongoose from 'mongoose';
+import { approveStudent } from './_helpers.mjs';
 
 // Runs against a throwaway database, never the application one. Transactions
 // are required, so the URI must point at the replica set.
@@ -94,6 +95,7 @@ await check('client-sent age is ignored', async () => {
       { name: 'P', mobile: '9990001111', relationship: 'FATHER' },
     ] },
   });
+  await approveStudent(student.id);
   if (student.age === 45) throw new Error('client age was trusted');
   if (!student.isMinor) throw new Error('should be a minor');
 });
@@ -108,15 +110,18 @@ const aarohi = await svc.createStudent({
     guardians: [{ name: 'Varun Sharma', mobile: '9876543210', relationship: 'FATHER' }],
   },
 });
+await approveStudent(aarohi.id);
 const rahul = await svc.createStudent({
   userId: userA,
   payload: { name: 'Rahul', dateOfBirth: '2012-03-01',
     guardians: [{ name: 'Varun Sharma', mobile: '9876543210', relationship: 'FATHER' }] },
 });
+await approveStudent(rahul.id);
 const ananya = await svc.createStudent({
   userId: userB,
   payload: { name: 'Ananya', dateOfBirth: '2005-05-05' },
 });
+await approveStudent(ananya.id);
 
 await check('adult student needs no guardian', async () => {
   if (ananya.isMinor) throw new Error('should be adult');

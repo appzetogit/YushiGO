@@ -1563,6 +1563,12 @@ export const updateMailSettings = asyncHandler(async (req, res) =>
   ok(res, { settings: await adminService.updateMailSettings(req.body) }),
 );
 
+export const getKycSettings = asyncHandler(async (_req, res) =>
+  ok(res, await adminService.getKycSettings()),
+);
+export const updateKycSettings = asyncHandler(async (req, res) =>
+  ok(res, await adminService.updateKycSettings(req.body)),
+);
 export const getRechargeApiSettings = asyncHandler(async (_req, res) =>
   ok(res, await adminService.getRechargeApiSettings()),
 );
