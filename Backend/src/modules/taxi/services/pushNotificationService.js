@@ -123,10 +123,17 @@ const sendPushToTargets = async ({
   body,
   image = '',
   data = {},
+  // Data-only pushes carry no `notification` block. The driver app's native
+  // full-screen ride-offer card is built in RideRequestMessagingService, which
+  // Android only calls for data-only messages when the app is in the background
+  // or killed; a `notification` block makes FCM draw a plain tray alert instead.
+  dataOnly = false,
+  ttlSeconds = 0,
 }) => {
   const messaging = getFirebaseMessaging();
 
   if (!messaging) {
+    console.warn('[push] Firebase messaging is not configured - push skipped');
     return {
       attempted: false,
       deliveredCount: 0,
@@ -162,26 +169,35 @@ const sendPushToTargets = async ({
   for (const batch of chunk(dedupedTargets, 500)) {
     const response = await messaging.sendEachForMulticast({
       tokens: batch.map((target) => target.token),
-      notification: {
-        title,
-        body,
-        ...(image ? { imageUrl: image } : {}),
-      },
+      ...(dataOnly
+        ? {}
+        : {
+            notification: {
+              title,
+              body,
+              ...(image ? { imageUrl: image } : {}),
+            },
+          }),
       data: {
         ...safeData,
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
       },
       android: {
         priority: 'high',
-        notification: image ? { imageUrl: image } : undefined,
+        ...(ttlSeconds > 0 ? { ttl: ttlSeconds * 1000 } : {}),
+        ...(dataOnly ? {} : { notification: image ? { imageUrl: image } : undefined }),
       },
-      webpush: {
-        notification: {
-          title,
-          body,
-          ...(image ? { image } : {}),
-        },
-      },
+      ...(dataOnly
+        ? {}
+        : {
+            webpush: {
+              notification: {
+                title,
+                body,
+                ...(image ? { image } : {}),
+              },
+            },
+          }),
     });
 
     response.responses.forEach((item, index) => {
@@ -191,6 +207,11 @@ const sendPushToTargets = async ({
       }
 
       failedCount += 1;
+      // Without this the only symptom of a bad token / wrong Firebase project is
+      // a driver who silently never gets a ride request.
+      console.warn(
+        `[push] send failed role=${batch[index]?.role} entity=${batch[index]?.entityId} code=${item.error?.code} msg=${item.error?.message}`,
+      );
       if (INVALID_TOKEN_CODES.has(item.error?.code)) {
         invalidTargets.push(batch[index]);
       }
@@ -347,13 +368,22 @@ export const sendPushNotificationToEntities = async ({
   body,
   image = '',
   data = {},
+  dataOnly = false,
+  ttlSeconds = 0,
 }) => {
   const targets = await collectDirectTargets({ userIds, driverIds });
+  if (targets.length === 0) {
+    console.warn(
+      `[push] no FCM token saved for drivers=[${driverIds.join(',')}] users=[${userIds.join(',')}] type=${data?.type || ''}`,
+    );
+  }
   return sendPushToTargets({
     targets,
     title,
     body,
     image,
     data,
+    dataOnly,
+    ttlSeconds,
   });
 };

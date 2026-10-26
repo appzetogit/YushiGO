@@ -688,6 +688,8 @@ const closeDriverRequestWindow = (rideId, driverIds = []) => {
       reason: 'search-window-expired',
     });
   }
+
+  pushRideRequestClosed(rideId, safeDriverIds);
 };
 
 const buildRideRequestPayload = ({
@@ -784,21 +786,78 @@ const emitRideRequestToDrivers = async ({
     emitToDriver(driver._id, 'rideRequest', payload);
   }
 
+  // One push per driver: the card shows each driver's own pickup distance. It is
+  // DATA-ONLY on purpose - a `notification` block makes Android draw a plain tray
+  // alert and never run the driver app's full-screen ride-offer card or its
+  // looping ringtone. Every field the native card renders must be in `data`,
+  // because the card has to draw with the app killed and no network.
+  const tripDistanceKm = (Number(ride.estimatedDistanceMeters || 0) / 1000).toFixed(1);
+  const expiresInSeconds = Math.max(1, Math.round(Number(dispatchConfig.retryWindowSeconds) || 25));
+  const pickupCoords = ride.pickupLocation?.coordinates;
+
+  for (const driver of targetDrivers) {
+    const driverCoords = driver.location?.coordinates;
+    const pickupDistanceKm = Array.isArray(pickupCoords) && Array.isArray(driverCoords) && driverCoords.length >= 2
+      ? haversineDistanceKm(pickupCoords, driverCoords).toFixed(1)
+      : '';
+
+    sendPushNotificationToEntities({
+      driverIds: [String(driver._id)],
+      title: ['parcel', 'medicine'].includes(ride.serviceType) ? 'New delivery request' : 'New ride request',
+      body: ride.pickupAddress
+        ? `Pickup: ${ride.pickupAddress}`
+        : 'A new booking is waiting for your response.',
+      dataOnly: true,
+      ttlSeconds: expiresInSeconds,
+      data: {
+        type: 'ride_request',
+        rideId: String(ride._id),
+        serviceType: ride.serviceType || 'ride',
+        userId: String(ride.userId?._id || ride.userId || ''),
+        riderName: ride.userId?.name || 'Customer',
+        fare: ride.fare ?? '',
+        pickupAddress: ride.pickupAddress || '',
+        dropAddress: ride.dropAddress || '',
+        pickupDistanceKm,
+        tripDistanceKm,
+        vehicleIconType: ride.vehicleIconType || '',
+        vehicleLabel: ride.vehicleIconType || '',
+        expiresInSeconds,
+      },
+    }).catch((error) => {
+      console.error('Failed to send driver ride-request push notification', error);
+    });
+  }
+};
+
+// Withdraws the full-screen card (and its ringtone) on a driver's phone when the
+// offer is gone: accepted by someone else, cancelled, expired or unmatched.
+const pushRideRequestClosed = (rideId, driverIds = []) => {
+  const ids = [...new Set((Array.isArray(driverIds) ? driverIds : []).map((id) => String(id || '')).filter(Boolean))];
+  if (!ids.length) {
+    return;
+  }
+
   sendPushNotificationToEntities({
-    driverIds: targetDrivers.map((driver) => String(driver._id)),
-    title: ['parcel', 'medicine'].includes(ride.serviceType) ? 'New delivery request' : 'New ride request',
-    body: ride.pickupAddress
-      ? `Pickup: ${ride.pickupAddress}`
-      : 'A new booking is waiting for your response.',
+    driverIds: ids,
+    dataOnly: true,
+    ttlSeconds: 60,
     data: {
-      type: 'ride_request',
-      rideId: String(ride._id),
-      serviceType: ride.serviceType || 'ride',
-      userId: String(ride.userId?._id || ride.userId || ''),
+      type: 'ride_request_closed',
+      rideId: String(rideId),
     },
   }).catch((error) => {
-    console.error('Failed to send driver ride-request push notification', error);
+    console.error('Failed to send ride-request-closed push notification', error);
   });
+};
+
+const haversineDistanceKm = ([lng1, lat1], [lng2, lat2]) => {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
 export const getPendingRideOffersForDriver = async (driverId) => {
@@ -907,6 +966,7 @@ const closeRideAsUnmatched = async (rideId) => {
       reason: 'unmatched',
     });
   }
+  pushRideRequestClosed(ride._id, dispatchState.notifiedDriverIds);
 
   emitToRoom(getRideRoom(ride._id), SOCKET_EVENTS.RIDE_STATUS_UPDATED, {
     rideId: String(ride._id),
@@ -1088,6 +1148,7 @@ export const cancelRideByUser = async ({ rideId, userId, reasonCode = '', reason
       cancellation: cancellationDetail,
     });
   }
+  pushRideRequestClosed(ride._id, dispatchState.notifiedDriverIds);
 
   emitToRoom(getRideRoom(ride._id), 'rideCancelled', {
     rideId: String(ride._id),
@@ -1645,6 +1706,12 @@ export const notifyRideAccepted = async (ride) => {
       reason: 'accepted-by-another-driver',
     });
   }
+
+  // The driver who accepted already holds the ride; everyone else's card goes.
+  pushRideRequestClosed(
+    populatedRide._id,
+    state.notifiedDriverIds.filter((id) => String(id) !== String(populatedRide.driverId?._id || '')),
+  );
 
   sendPushNotificationToEntities({
     userIds: [String(populatedRide.userId)],
