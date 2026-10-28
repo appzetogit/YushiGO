@@ -2854,6 +2854,13 @@ export const goOnline = async (req, res) => {
     throw new ApiError(404, "Driver not found");
   }
 
+  if (
+    existingDriver.approve === false ||
+    String(existingDriver.status || "").toLowerCase() === "inactive"
+  ) {
+    throw new ApiError(403, "Your account has been deactivated. Please contact support.");
+  }
+
   const todayKey = new Date().toISOString().slice(0, 10);
   const hasTodaySelfie =
     String(existingDriver.onlineSelfie?.forDate || "") === todayKey &&

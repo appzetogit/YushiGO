@@ -15,7 +15,8 @@ import {
   ChevronRight,
   Filter,
   List,
-  LayoutGrid
+  LayoutGrid,
+  Wallet
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -34,6 +35,8 @@ const DriverList = ({ mode = 'approved' }) => {
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({ dateRange: '', vehicleType: '' });
   const [passwordModal, setPasswordModal] = useState({ isOpen: false, driverId: null, password: '', isSubmitting: false });
+  const [walletModal, setWalletModal] = useState(null);
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [drivers, setDrivers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -69,6 +72,8 @@ const DriverList = ({ mode = 'approved' }) => {
           onlineSelfieImage: d.online_selfie_image || '',
           onlineSelfieCapturedAt: d.online_selfie_captured_at || null,
           registeredAt: d.createdAt || null,
+          active: d.active !== false,
+          walletBalance: Number(d.wallet_balance || 0),
           status: mode === 'active' ? 'Online' : (d.approve ? 'Approved' : (d.status || 'Approved')),
         }));
         setDrivers(approved);
@@ -192,6 +197,69 @@ const DriverList = ({ mode = 'approved' }) => {
       if (action === 'password') setPasswordModal(prev => ({ ...prev, isSubmitting: false }));
     }
   };
+
+  const toggleDriverActive = async (driver) => {
+    const nextActive = !driver.active;
+    if (!nextActive && !window.confirm(`Deactivate ${driver.name}? They will be taken offline and cannot go online until reactivated.`)) return;
+
+    setStatusUpdatingId(driver.id);
+    try {
+      const resData = await adminService.updateDriverStatus(driver.id, { status: nextActive ? 'approved' : 'inactive' });
+      if (resData.success) {
+        setDrivers(prev => prev.map(d => (d.id === driver.id ? { ...d, active: nextActive, isOnline: nextActive ? d.isOnline : false } : d)));
+      } else {
+        alert(resData.message || 'Failed to update status');
+      }
+    } catch (err) {
+      alert(err.message || 'Network error while updating status');
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  const openWalletModal = (driver) => {
+    if (!driver) return;
+    setWalletModal({ driver, mode: 'credit', amount: '', description: '', isSubmitting: false });
+  };
+
+  // What the modal will send: "set balance" becomes a credit or debit of the difference.
+  const walletChange = (() => {
+    if (!walletModal || walletModal.amount === '') return null;
+    const amount = Math.round(Number(walletModal.amount) * 100) / 100;
+    if (!Number.isFinite(amount)) return null;
+    if (walletModal.mode === 'set') {
+      const diff = Math.round((amount - walletModal.driver.walletBalance) * 100) / 100;
+      if (diff === 0) return null;
+      return { operation: diff > 0 ? 'credit' : 'debit', amount: Math.abs(diff) };
+    }
+    if (amount <= 0) return null;
+    return { operation: walletModal.mode, amount };
+  })();
+
+  const submitWallet = async () => {
+    if (!walletModal || !walletChange) return;
+    const { driver, description } = walletModal;
+    setWalletModal(prev => ({ ...prev, isSubmitting: true }));
+    try {
+      const resData = await adminService.adjustDriverWallet(driver.id, {
+        ...walletChange,
+        description: String(description || '').trim() || undefined,
+      });
+      if (resData.success) {
+        const balance = Number(resData.data?.balance ?? driver.walletBalance);
+        setDrivers(prev => prev.map(d => (d.id === driver.id ? { ...d, walletBalance: balance } : d)));
+        setWalletModal(null);
+      } else {
+        alert(resData.message || 'Failed to update wallet');
+        setWalletModal(prev => ({ ...prev, isSubmitting: false }));
+      }
+    } catch (err) {
+      alert(err.message || 'Network error while updating wallet');
+      setWalletModal(prev => ({ ...prev, isSubmitting: false }));
+    }
+  };
+
+  const formatMoney = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const formatDate = (value) => {
     if (!value) return 'N/A';
@@ -319,6 +387,7 @@ const DriverList = ({ mode = 'approved' }) => {
                 <th className="px-3 py-2">Selfie</th>
                 <th className="px-3 py-2 text-center">Docs</th>
                 <th className="px-3 py-2 text-center">Status</th>
+                <th className="px-3 py-2">Wallet</th>
                 <th className="px-3 py-2">Rating</th>
                 <th className="px-3 py-2">Registered</th>
                 <th className="px-3 py-2 text-right">Action</th>
@@ -327,11 +396,11 @@ const DriverList = ({ mode = 'approved' }) => {
             <tbody className="divide-y divide-gray-100 text-xs text-gray-700">
               {isLoading ? (
                 <tr>
-                  <td colSpan="11" className="px-3 py-6 text-center text-gray-400">Loading drivers...</td>
+                  <td colSpan="12" className="px-3 py-6 text-center text-gray-400">Loading drivers...</td>
                 </tr>
               ) : drivers.length === 0 ? (
                 <tr>
-                  <td colSpan="11" className="px-3 py-6 text-center text-gray-400">No drivers found.</td>
+                  <td colSpan="12" className="px-3 py-6 text-center text-gray-400">No drivers found.</td>
                 </tr>
               ) : (
                 drivers.map((driver) => (
@@ -368,9 +437,39 @@ const DriverList = ({ mode = 'approved' }) => {
                       </button>
                     </td>
                     <td className="px-3 py-1.5 text-center">
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-800 border border-green-200 capitalize">
-                        {driver.status}
-                      </span>
+                      {mode === 'active' ? (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-800 border border-green-200 capitalize">
+                          {driver.status}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={driver.active}
+                          disabled={statusUpdatingId === driver.id}
+                          onClick={() => toggleDriverActive(driver)}
+                          title={driver.active ? 'Active - click to deactivate' : 'Inactive - click to activate'}
+                          className="inline-flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${driver.active ? 'bg-green-500' : 'bg-gray-300'}`}>
+                            <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${driver.active ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                          </span>
+                          <span className={`text-[10px] font-bold ${driver.active ? 'text-green-700' : 'text-gray-500'}`}>
+                            {driver.active ? 'Active' : 'Inactive'}
+                          </span>
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => openWalletModal(driver)}
+                        className={`inline-flex items-center gap-1 rounded border border-gray-200 px-1.5 py-0.5 font-semibold hover:bg-gray-50 transition-colors ${driver.walletBalance < 0 ? 'text-red-600' : 'text-gray-800'}`}
+                        title="Edit wallet balance"
+                      >
+                        {formatMoney(driver.walletBalance)}
+                        <Edit2 size={10} className="text-gray-400" />
+                      </button>
                     </td>
                     <td className="px-3 py-1.5">
                       <div className="flex items-center gap-0.5">
@@ -462,6 +561,16 @@ const DriverList = ({ mode = 'approved' }) => {
             </button>
             <button
               onClick={() => {
+                const driver = drivers.find(d => d.id === activeMenu);
+                closeMenu();
+                openWalletModal(driver);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 text-gray-700 rounded-lg transition-colors text-sm font-medium"
+            >
+              <Wallet size={15} className="text-emerald-600" /> Edit Wallet
+            </button>
+            <button
+              onClick={() => {
                 closeMenu();
                 navigate(`/admin/drivers/${activeMenu}`);
               }}
@@ -482,6 +591,86 @@ const DriverList = ({ mode = 'approved' }) => {
           </div>
         </>,
         document.body,
+      )}
+
+      {/* Wallet Modal */}
+      {walletModal && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl border border-gray-100 overflow-hidden p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Edit Wallet</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {walletModal.driver.name} · current balance{' '}
+                  <span className={`font-bold ${walletModal.driver.walletBalance < 0 ? 'text-red-600' : 'text-gray-900'}`}>{formatMoney(walletModal.driver.walletBalance)}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setWalletModal(null)}
+                className="text-gray-400 hover:text-gray-900 transition-colors"
+              >
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 text-xs font-bold">
+              {[['credit', 'Add'], ['debit', 'Deduct'], ['set', 'Set balance']].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setWalletModal(prev => ({ ...prev, mode: key }))}
+                  className={`rounded-md py-1.5 transition-colors ${walletModal.mode === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">{walletModal.mode === 'set' ? 'New balance (₹)' : 'Amount (₹)'}</label>
+              <input
+                type="number"
+                step="0.01"
+                min={walletModal.mode === 'set' ? undefined : '0'}
+                autoFocus
+                placeholder={walletModal.mode === 'set' ? 'e.g. 0' : 'e.g. 500'}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400 focus:border-yellow-400 transition-colors"
+                value={walletModal.amount}
+                onChange={(e) => setWalletModal(prev => ({ ...prev, amount: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Note (optional)</label>
+              <input
+                type="text"
+                maxLength={200}
+                placeholder="Reason for the change"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400 focus:border-yellow-400 transition-colors"
+                value={walletModal.description}
+                onChange={(e) => setWalletModal(prev => ({ ...prev, description: e.target.value }))}
+              />
+            </div>
+
+            {walletChange && (
+              <p className="text-xs text-gray-500">
+                {walletChange.operation === 'credit' ? 'Adds' : 'Deducts'} <span className="font-bold text-gray-900">{formatMoney(walletChange.amount)}</span> · new balance{' '}
+                <span className="font-bold text-gray-900">
+                  {formatMoney(walletModal.driver.walletBalance + (walletChange.operation === 'credit' ? walletChange.amount : -walletChange.amount))}
+                </span>
+              </p>
+            )}
+
+            <button
+              onClick={submitWallet}
+              disabled={walletModal.isSubmitting || !walletChange}
+              className="w-full py-2 bg-yellow-400 text-black rounded-lg text-sm font-bold shadow-sm hover:bg-yellow-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {walletModal.isSubmitting ? <Loader2 className="animate-spin" size={15} /> : <Wallet size={15} />}
+              Update Wallet
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Password Modal */}

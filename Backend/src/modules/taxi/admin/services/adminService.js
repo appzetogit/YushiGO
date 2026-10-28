@@ -2707,6 +2707,7 @@ const DRIVER_LIST_SELECT = [
   'location',
   'approve',
   'status',
+  'wallet',
   'createdAt',
   'updatedAt',
 ].join(' ');
@@ -2755,6 +2756,8 @@ const serializeDriverListItem = (driver) => ({
   approve: Boolean(driver.approve),
   status: driver.status || (driver.approve ? 'approved' : 'pending'),
   active: driver.approve !== false && String(driver.status || '').toLowerCase() !== 'inactive',
+  wallet_balance: Number(Number(driver.wallet?.balance || 0).toFixed(2)),
+  wallet_is_blocked: Boolean(driver.wallet?.isBlocked),
   createdAt: driver.createdAt,
   updatedAt: driver.updatedAt,
 });
@@ -5339,6 +5342,11 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
     update.status = String(payload.status);
   } else if ('approve' in payload) {
     update.status = update.approve ? 'approved' : 'pending';
+  }
+
+  // A deactivated driver goes offline at once so dispatch stops offering them rides.
+  if (String(update.status || '').toLowerCase() === 'inactive' || update.approve === false) {
+    update.isOnline = false;
   }
 
   if (payload.documents !== undefined) {
