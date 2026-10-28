@@ -459,6 +459,12 @@ const DriverList = ({ mode = 'approved' }) => {
                           </span>
                         </button>
                       )}
+                      {mode !== 'active' && (
+                        <div className={`mt-0.5 flex items-center justify-center gap-1 text-[10px] font-semibold ${driver.isOnline ? 'text-green-600' : 'text-gray-400'}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${driver.isOnline ? 'bg-green-500' : 'bg-gray-300'}`} />
+                          {driver.isOnline ? 'Online' : 'Offline'}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-1.5">
                       <button
