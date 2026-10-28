@@ -4873,7 +4873,8 @@ export const adjustDriverWallet = async (id, payload = {}) => {
     driver.wallet.cashLimit = cashLimit;
     driver.wallet.isBlocked = isBlockedAfter;
     driver.markModified('wallet');
-    await driver.save({ session });
+    // Only the wallet changes here; a bad value elsewhere on the profile must not block it.
+    await driver.save({ session, validateModifiedOnly: true });
 
     await WalletTransaction.create(
       [
@@ -5238,6 +5239,16 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
   return serializeDriver(driver.toObject());
 };
 
+const toDriverVehicleCategory = (value = '', catalogVehicle = null) => {
+  const direct = String(value || '').trim().toLowerCase();
+  if (VEHICLE_TYPES.includes(direct)) return direct;
+
+  const hint = `${catalogVehicle?.icon_types || ''} ${catalogVehicle?.name || ''} ${direct}`.toLowerCase();
+  if (hint.includes('bike')) return 'bike';
+  if (hint.includes('auto')) return 'auto';
+  return 'car';
+};
+
 export const updateDriver = async (id, payload, currentAdmin = null) => {
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
@@ -5273,16 +5284,24 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
     update.registerFor = normalizeDriverRegisterFor(transportTypeValue);
   }
 
-  const vehicleTypeValue = payload.vehicle_type ?? payload.vehicleType ?? payload.car_type;
-  if (vehicleTypeValue !== undefined) {
-    update.vehicleType = String(vehicleTypeValue || '').trim().toLowerCase() || 'car';
-  }
-
   const vehicleTypeId =
     payload.vehicle_type_id ?? payload.vehicleTypeId ?? payload.vehicleType?._id ?? payload.vehicleType?.id;
   if (vehicleTypeId !== undefined) {
     update.vehicleTypeId =
       vehicleTypeId && mongoose.isValidObjectId(vehicleTypeId) ? toObjectId(vehicleTypeId) : null;
+  }
+
+  // vehicleType is the dispatch category (bike/auto/car). The edit form sends the catalog
+  // name ("Texi Go"), so derive the category from the chosen catalog vehicle instead.
+  const vehicleTypeValue = payload.vehicle_type ?? payload.vehicleType ?? payload.car_type;
+  if (vehicleTypeValue !== undefined || update.vehicleTypeId) {
+    const catalogVehicle = update.vehicleTypeId
+      ? await Vehicle.findById(update.vehicleTypeId).select('name icon_types').lean()
+      : null;
+    update.vehicleType = toDriverVehicleCategory(
+      typeof vehicleTypeValue === 'string' ? vehicleTypeValue : '',
+      catalogVehicle,
+    );
   }
 
   if (payload.vehicle_make !== undefined || payload.vehicleMake !== undefined || payload.car_make !== undefined) {
