@@ -282,6 +282,28 @@ export const adminService = {
   approveCarpoolDocument: (id) => api.post(`/admin/carpool/documents/${id}/approve`),
   rejectCarpoolDocument: (id, reason) => api.post(`/admin/carpool/documents/${id}/reject`, { reason }),
 
+  // Search a Driver — a verified driver for the customer's own car.
+  getDriverHireBookings: (params = {}) => api.get('/admin/driver-hire/bookings', { params }),
+  getDriverHireBooking: (id) => api.get(`/admin/driver-hire/bookings/${id}`),
+  getDriverHireEligibleDrivers: (id) => api.get(`/admin/driver-hire/bookings/${id}/eligible-drivers`),
+  assignDriverHireBooking: (id, driverId, direct = false) => api.post(`/admin/driver-hire/bookings/${id}/assign`, { driverId, direct }),
+  reassignDriverHireBooking: (id, reason) => api.post(`/admin/driver-hire/bookings/${id}/reassign`, { reason }),
+  cancelDriverHireBooking: (id, reason, chargeCustomerFee = false) => api.post(`/admin/driver-hire/bookings/${id}/cancel`, { reason, chargeCustomerFee }),
+  openDriverHireDispute: (id, note) => api.post(`/admin/driver-hire/bookings/${id}/dispute`, { note }),
+  resolveDriverHireDispute: (id, outcome, refundAmount = 0) => api.post(`/admin/driver-hire/bookings/${id}/resolve`, { outcome, refundAmount }),
+  getDriverHireDrivers: (params = {}) => api.get('/admin/driver-hire/drivers', { params }),
+  getDriverHireDriver: (id) => api.get(`/admin/driver-hire/drivers/${id}`),
+  reviewDriverHireDriver: (id, action, reason = '') => api.post(`/admin/driver-hire/drivers/${id}/${action}`, { reason }),
+  getDriverHirePricing: (history = false) => api.get('/admin/driver-hire/pricing', { params: { history } }),
+  publishDriverHirePricing: (data) => api.post('/admin/driver-hire/pricing', data),
+  setDriverHirePaymentStatus: (id, status, gatewayReference = '') => api.post(`/admin/driver-hire/payments/${id}/status`, { status, gatewayReference }),
+  refundDriverHirePayment: (id, amount, reason, completed = false) => api.post(`/admin/driver-hire/payments/${id}/refund`, { amount, reason, completed }),
+  getDriverHireSupportCases: (params = {}) => api.get('/admin/driver-hire/support-cases', { params }),
+  updateDriverHireSupportCase: (id, data) => api.patch(`/admin/driver-hire/support-cases/${id}`, data),
+  getDriverHireReviews: (params = {}) => api.get('/admin/driver-hire/reviews', { params }),
+  moderateDriverHireReview: (id, status) => api.post(`/admin/driver-hire/reviews/${id}/moderate`, { status }),
+  getDriverHireReport: (params = {}) => api.get('/admin/driver-hire/reports', { params }),
+
   getPoolingVehicles: () => api.get('/admin/pooling-vehicles'),
   getPendingPoolingVehicles: (search = '') =>
     api.get('/admin/pooling-vehicles', { params: { approve: false, search } }),

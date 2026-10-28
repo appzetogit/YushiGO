@@ -92,6 +92,10 @@ import {
   AdminPendingPoolingDrivers,
   AdminStudentVerification,
   AdminCarpoolDocuments,
+  AdminDriverHireBookings,
+  AdminDriverHireDrivers,
+  AdminDriverHirePricing,
+  AdminDriverHireReports,
   AdminPendingServiceStaff,
   AdminPendingServiceStores,
   AdminPoolingBookings,
@@ -219,6 +223,11 @@ const adminRoutes = (
       <Route path="pooling/pending-drivers" element={<AdminPendingPoolingDrivers />} />
       <Route path="verification/students" element={<AdminStudentVerification />} />
       <Route path="verification/carpool-documents" element={<AdminCarpoolDocuments />} />
+      <Route path="driver-hire" element={<Navigate to="/admin/driver-hire/bookings" replace />} />
+      <Route path="driver-hire/bookings" element={<AdminDriverHireBookings />} />
+      <Route path="driver-hire/drivers" element={<AdminDriverHireDrivers />} />
+      <Route path="driver-hire/pricing" element={<AdminDriverHirePricing />} />
+      <Route path="driver-hire/reports" element={<AdminDriverHireReports />} />
       <Route path="pooling/create" element={<AdminPoolingManager mode="create" />} />
       <Route path="pooling/edit/:id" element={<AdminPoolingManager mode="edit" />} />
       <Route path="pooling/vehicles" element={<AdminPoolingVehicles />} />

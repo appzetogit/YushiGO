@@ -198,6 +198,10 @@ export const AdminPoolingVehicles = lazy(() => import('../modules/admin/pages/po
 export const AdminPendingPoolingDrivers = lazy(() => import('../modules/admin/pages/pooling/PendingPoolingDrivers'));
 export const AdminStudentVerification = lazy(() => import('../modules/admin/pages/verification/StudentVerification'));
 export const AdminCarpoolDocuments = lazy(() => import('../modules/admin/pages/verification/CarpoolDocuments'));
+export const AdminDriverHireBookings = lazy(() => import('../modules/admin/pages/driver-hire/DriverHireBookings'));
+export const AdminDriverHireDrivers = lazy(() => import('../modules/admin/pages/driver-hire/DriverHireDrivers'));
+export const AdminDriverHirePricing = lazy(() => import('../modules/admin/pages/driver-hire/DriverHirePricing'));
+export const AdminDriverHireReports = lazy(() => import('../modules/admin/pages/driver-hire/DriverHireReports'));
 export const AdminPoolingVehicleForm = lazy(() => import('../modules/admin/pages/pooling/PoolingVehicleForm'));
 export const AdminPoolingBookings = lazy(() => import('../modules/admin/pages/pooling/PoolingBookings'));
 export const AdminPoolingCommissionManager = lazy(() => import('../modules/admin/pages/pooling/PoolingCommissionManager'));

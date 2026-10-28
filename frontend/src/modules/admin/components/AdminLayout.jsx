@@ -893,6 +893,16 @@ const AdminLayout = () => {
             ],
           },
           {
+            icon: UserCog,
+            label: 'Search a Driver',
+            subItems: [
+              { label: 'Driver Bookings', path: '/admin/driver-hire/bookings' },
+              { label: 'Driver Verification', path: '/admin/driver-hire/drivers' },
+              { label: 'Pricing', path: '/admin/driver-hire/pricing' },
+              { label: 'Reports & Support', path: '/admin/driver-hire/reports' },
+            ],
+          },
+          {
             icon: Share2,
             label: 'Car Pooling',
             subItems: [

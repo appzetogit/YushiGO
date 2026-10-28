@@ -7,6 +7,7 @@ import { configureTaxiSocketServer } from './src/modules/taxi/socket/index.js';
 import { User } from './src/modules/taxi/user/models/User.js';
 import { restoreScheduledDispatches, startDispatchRecoveryLoop } from './src/modules/taxi/services/dispatchService.js';
 import { startCarpoolExpirySweep } from './src/modules/taxi/carpool/services/carpoolExpiryService.js';
+import { startDriverHireSweep } from './src/modules/taxi/driverHire/services/sweepService.js';
 
 const bootstrap = async () => {
   await connectDatabase();
@@ -27,6 +28,9 @@ const bootstrap = async () => {
   startDispatchRecoveryLoop();
   // Carpool-only; CARPOOL_EXPIRY_SWEEP_ENABLED=false turns it off.
   startCarpoolExpirySweep();
+  // Search a Driver: offer timeouts, no-driver expiry, licence reminders.
+  // DRIVER_HIRE_SWEEP_ENABLED=false turns it off.
+  startDriverHireSweep();
 
   httpServer.listen(env.port, () => {
     const redisStatus = getRedisStatus();

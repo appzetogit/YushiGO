@@ -1426,6 +1426,230 @@ confirmed seat may watch.
 **Payment is not implemented.** Every booking is `payment_status: NOT_REQUIRED` — passengers settle
 cash with the host. Do not build a payment step against these endpoints yet.
 
+## 10c. Search a Driver (driver for the customer's own car)
+
+A verified driver drives **the customer's own car**. Yushi Go supplies the driver, never a vehicle —
+so there is no vehicle type, no fleet and no fare per km. It is a separate module from rides,
+rentals and carpool, with its own endpoints, statuses and pricing. This section covers both apps:
+the customer half is `user`-authenticated, the driver half `driver`-authenticated.
+
+Home tile: **SEARCH A DRIVER** — *Your car. Your journey. Our verified drivers.* Primary actions
+Hire Driver Now, Schedule a Driver, Outstation Driver; secondary Hourly Driver, Event Driver.
+
+### Service types
+
+| `serviceType` | What to send | Notes |
+|---|---|---|
+| `NOW` | `durationMinutes` (or `durationHours`) | no `scheduledAt` — the clock starts at confirmation |
+| `SCHEDULED` | `scheduledAt`, `durationMinutes` | at least 60 min ahead, at most 30 days |
+| `HOURLY` | `scheduledAt`, `durationHours` | billed in the admin's hourly blocks |
+| `OUTSTATION` | `scheduledAt`, `destination` (required), `durationDays`, `outstationTripType` `ONE_WAY`/`ROUND_TRIP`, optional `nights` (default `durationDays - 1`) | allowances shown before confirmation |
+| `EVENT` | `scheduledAt`, `eventPackageCode` | the package sets the duration and price |
+
+Duration is 30 min to 24 h (outstation 1–15 days). A service type with no pricing set by the admin
+returns `422 PRICING_NOT_CONFIGURED` — show "not available here yet", not an error.
+
+### Customer: saved cars
+
+| Method | Path |
+|---|---|
+| GET, POST | `/driver-hire/vehicles` |
+| PATCH, DELETE | `/driver-hire/vehicles/:vehicleId` |
+
+`{ "make": "Maruti", "model": "Swift", "transmission": "MANUAL", "notes": "Reverse camera" }`
+
+That is all we collect about the car — **no registration number, no documents**. `transmission`
+(`MANUAL` / `AUTOMATIC`) matters: only drivers who drive that transmission are matched.
+
+### Customer: booking flow
+
+| Screen | Call |
+|---|---|
+| 1–3. Type, trip, car | — |
+| (optional) "Drivers available?" | `GET /drivers/availability?serviceType=&transmission=&scheduledAt=&durationMinutes=` → `{ available, count }` |
+| 4. Fare estimate | `POST /driver-bookings/quote` |
+| 5. Confirm | `POST /driver-bookings` |
+| 6. Active booking | `GET /driver-bookings/:id` (poll every 10–15 s while active), `POST …/cancel`, `POST …/confirm-arrival` |
+| 7. Completion | `GET /driver-bookings/:id` (`final`), `POST …/rate`, `POST /support-cases` |
+| My bookings | `GET /driver-bookings?scope=active` / `?scope=past` |
+
+**Quote:**
+
+```json
+POST /driver-bookings/quote
+{ "serviceType": "SCHEDULED",
+  "pickup": { "address": "MG Road, Indore", "latitude": 22.7196, "longitude": 75.8577 },
+  "destination": null,
+  "stops": [],
+  "scheduledAt": "2026-11-02T04:30:00.000Z",
+  "durationMinutes": 180,
+  "vehicleId": "…",
+  "serviceLocationId": "…optional…" }
+```
+
+```json
+{ "quoteId": "…", "expiresAt": "…15 min…",
+  "fare": { "currency": "INR",
+            "lines": [ { "code": "BASE", "label": "Base fare (first 60 min)", "amount": 300 },
+                       { "code": "EXTRA_TIME", "label": "Additional time (2 × 60 min)", "amount": 200 },
+                       { "code": "BOOKING_FEE", "label": "Booking fee", "amount": 20 } ],
+            "subtotal": 520, "tax": 26, "total": 546 },
+  "terms": { "freeWaitingMinutes": 15, "waitingPerMinute": 2, "extraBlockMinutes": 60, "extraBlockFare": 100,
+             "freeCancelMinutes": 5, "freeCancelBeforePickupMinutes": 60, "cancellationFee": 50,
+             "lateCancellationFee": 100, "noShowWaitMinutes": 30, "noShowFee": 150,
+             "tollsAndParking": "Paid by you. …", "finalFareNote": "The final fare can be higher …" } }
+```
+
+**Render every line and the whole `terms` block on the estimate screen** — the spec requires waiting,
+overtime, allowance and cancellation rules to be visible before confirmation. Do not compute any
+amount on the device; the server ignores fares the app sends.
+
+**Confirm:**
+
+```json
+POST /driver-bookings
+{ "quoteId": "…", "vehicleId": "…", "acceptTerms": true, "paymentMethod": "CASH", "requirements": "Wedding, formal dress please" }
+```
+
+Idempotent per quote: a double tap or a retried request returns the **same** booking (`201` both
+times). A lapsed quote is `410 QUOTE_EXPIRED` — re-quote. `acceptTerms` must be `true`.
+
+**Statuses** (show these labels):
+
+| `status` | Label |
+|---|---|
+| `REQUESTED` | Finding a driver |
+| `DRIVER_ASSIGNED` | Driver assigned |
+| `DRIVER_EN_ROUTE` | Driver on the way |
+| `DRIVER_ARRIVED` | Driver has arrived |
+| `TRIP_STARTED` | Trip started |
+| `TRIP_COMPLETED` | Completed |
+| `CANCELLED_BY_CUSTOMER` / `CANCELLED_BY_DRIVER` / `CANCELLED_BY_ADMIN` | Cancelled |
+| `EXPIRED` | No driver found (never charged) |
+| `DISPUTED` | Under review |
+
+If the assigned driver cancels, the booking normally goes **back to `REQUESTED`** (the customer gets
+a "finding another driver" push) rather than ending. `timeline` lists every status with its time.
+
+**What the customer sees once a driver is assigned:** `driver` = `{ name: "Anil K.", photo, rating,
+ratingCount, verified, experienceYears }` — first name and initial only, **never a phone number**.
+Use in-app support for contact. `driverLocation` appears only while en route, arrived or driving.
+
+**Start code.** `startCode` (4 digits) is on the customer's booking from assignment until the trip
+starts. Show it prominently on the active-booking screen: the customer reads it to the driver at
+pickup. Alternatively the customer taps **"My driver is here"** → `POST /driver-bookings/:id/confirm-arrival`
+(`canConfirmArrival: true` tells you when) — either one lets the driver start. The trip **cannot**
+start without one of them.
+
+**Cancelling:** `POST /driver-bookings/:id/cancel { "reason": "…" }` (reason required). Before you
+show the confirm dialog, read `cancellationFeeIfCancelledNow` from the booking and state it:
+
+| When | Fee |
+|---|---|
+| No driver yet | free |
+| Driver assigned, within `freeCancelMinutes`, or pickup more than `freeCancelBeforePickupMinutes` away | free |
+| Driver assigned otherwise | `cancellationFee` |
+| Driver on the way / arrived | `lateCancellationFee` |
+
+`canCancel: false` once the trip has started — hide the button.
+
+**Completion.** `final` carries the receipt: `lines` (may add `OVERTIME`, `WAITING`, `OVERNIGHT`,
+and pass-through `EXPENSE_TOLL` / `EXPENSE_PARKING` the driver paid for the customer), `tax`,
+`total`, `actualMinutes`, `waitingMinutes`. Then `canRate: true` →
+`POST /driver-bookings/:id/rate { "rating": 1-5, "comment": "" }` (once; `409 DUPLICATE_RATING` after).
+
+**Payment.** `paymentMethod` is `CASH` or `ONLINE`. Cash is collected by the driver at the end.
+**Online collection is not wired to the gateway yet** — an `ONLINE` booking is recorded with a
+pending payment that operations settle. Do not build a card/UPI step against these endpoints until
+the payment endpoint is added.
+
+### Report a problem / SOS (both apps)
+
+`POST /support-cases { "bookingId": "…optional…", "category": "SAFETY", "description": "…" }`
+— categories `SAFETY`, `ACCIDENT`, `VEHICLE_CONDITION`, `HARASSMENT`, `SUSPICIOUS_REQUEST`,
+`LATE_ARRIVAL`, `NO_SHOW`, `FARE`, `PAYMENT`, `LOST_PROPERTY`, `OTHER`. `SAFETY`, `ACCIDENT` and
+`HARASSMENT` open as `URGENT`. `GET /support-cases` lists the caller's own. The platform SOS (§8)
+still applies during a trip — put both on the active-booking screen.
+
+### Driver app
+
+**Onboarding** — the driver already has a taxi driver account (phone verified). Search a Driver adds:
+
+| Method | Path | |
+|---|---|---|
+| GET | `/driver-hire/profile` | `{ profile, agreement: { version, points[] } }`; `profile` is `null` before first submit |
+| PUT | `/driver-hire/profile` | create / update |
+| POST | `/driver-hire/online` | `{ "online": true }` — separate from the taxi online toggle |
+
+```json
+PUT /driver-hire/profile
+{ "licenceNumber": "MP0920190012345", "licenceExpiry": "2029-05-31",
+  "licenceDocument": "data:image/jpeg;base64,…",
+  "transmissions": ["MANUAL", "AUTOMATIC"],
+  "serviceTypes": ["NOW", "SCHEDULED", "HOURLY", "OUTSTATION", "EVENT"],
+  "serviceLocationIds": [], "experienceYears": 6,
+  "availabilitySlots": [ { "dayOfWeek": 1, "from": "08:00", "to": "20:00" } ],
+  "acceptAgreement": true }
+```
+
+Show `agreement.points` and require the driver to accept before submitting. The profile goes to
+`PENDING` for admin review; changing the licence later sends it back to review. Responses only
+ever carry `licenceNumberLast4`. Missing fields → `422 PROFILE_INCOMPLETE` with `details.missing`.
+Statuses: `PENDING`, `APPROVED`, `REJECTED` (`reviewNote` says why), `SUSPENDED`.
+Going online needs `APPROVED`, the current agreement and an unexpired licence; drivers get push
+reminders 30, 7 and 1 days before expiry and are taken offline when it lapses.
+
+**Dashboard:**
+
+| Method | Path | |
+|---|---|---|
+| GET | `/driver-hire/requests` | request cards for this driver |
+| GET | `/driver-bookings?scope=active` / `past` | their bookings |
+| GET | `/driver-bookings/:id` | full booking once assigned; `{ request }` card before |
+| GET | `/driver-hire/earnings` | last 7 / 30 days, all time, pending payout, rating |
+
+A **request card** shows only what is needed to decide: service type, time, duration, transmission,
+`pickupArea` (coordinates rounded to ~1 km — **no address**), `fare.estimatedEarnings`, and
+`offeredToYou` / `offerExpiresAt` when operations offered it to this driver specifically (show a
+countdown; it lapses after ~2 min and counts as declined). The address, car and the customer's
+first name appear after accepting. The driver never gets the customer's phone.
+
+**Lifecycle** (all `POST /driver-bookings/:id/…`):
+
+| Action | Body | Allowed from |
+|---|---|---|
+| `accept` | — | `REQUESTED` (NOW bookings need the driver online) |
+| `decline` | `{ "reason": "" }` | `REQUESTED` |
+| `en-route` | — | `DRIVER_ASSIGNED` |
+| `location` | `{ latitude, longitude }` every 10–20 s | en route, arrived, started only |
+| `arrived` | `{ latitude, longitude }` | `DRIVER_EN_ROUTE`, within 300 m of the pickup pin |
+| `start` | `{ "otp": "1234" }` or `{}` if the customer confirmed in-app | `DRIVER_ARRIVED` |
+| `complete` | `{ "cashCollected": true, "expenses": [ { "kind": "TOLL", "amount": 60, "note": "Bypass" } ] }` | `TRIP_STARTED` |
+| `no-show` | — | `DRIVER_ARRIVED`, after `noShowAvailableAt` |
+| `cancel` | `{ "reason": "…" }` | before start — puts the booking back for another driver |
+
+| Error | Meaning |
+|---|---|
+| `409 BOOKING_TAKEN` | someone else accepted first, or it is offered to another driver — refresh the list |
+| `409 DRIVER_BUSY` | it overlaps a booking you already hold |
+| `403 DRIVER_NOT_ELIGIBLE` | message says why (transmission, licence expiry, service type, area, availability) |
+| `422 INVALID_LOCATION` on arrived | too far; `details.distanceMeters` |
+| `422 START_NOT_CONFIRMED` | no code entered and the customer has not confirmed |
+| `422 INVALID_OTP` | wrong code; `details.attemptsRemaining` |
+| `429 OTP_ATTEMPTS_EXCEEDED` | ask the customer to tap "My driver is here" instead |
+| `409 INVALID_TRANSITION` | the booking moved on; `details.status` is the current one |
+
+Expenses are only for tolls/parking the driver actually paid on the customer's behalf; they are
+passed through at cost, with no commission or tax. Rate the customer after completion with
+`POST /driver-bookings/:id/rate`.
+
+**Pushes** (`notification_type`, booking id in `booking_id`): customer — `DRIVER_HIRE_DRIVER_ASSIGNED`,
+`_DRIVER_EN_ROUTE`, `_DRIVER_ARRIVED`, `_TRIP_STARTED`, `_TRIP_COMPLETED`, `_DRIVER_RELEASED`,
+`_CANCELLED_BY_DRIVER`, `_CANCELLED_BY_ADMIN`, `_EXPIRED`; driver — `DRIVER_HIRE_OFFER`,
+`_CANCELLED_BY_CUSTOMER`, `_CANCELLED_BY_ADMIN`, `_LICENCE_EXPIRING`, `_PROFILE_APPROVED`,
+`_PROFILE_REJECTED`, `_PROFILE_SUSPENDED`. Bodies never contain addresses or codes — fetch the
+booking. There is no socket channel for this module yet; poll the booking while it is active.
+
 ## 11. Support and chat (both apps)
 
 **Tickets** — `user`, `driver`, `owner`:
