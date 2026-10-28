@@ -182,15 +182,36 @@ const sendPushToTargets = async ({
         ...safeData,
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
       },
+      // Every push goes out at the highest delivery priority so Doze and battery
+      // saver do not defer it: FCM `high` on Android, APNs priority 10 on iOS and
+      // `Urgency: high` on web push. Data-only pushes (the ride-offer card) skip
+      // APNs/web: iOS requires priority 5 for silent pushes, and the card is Android.
       android: {
         priority: 'high',
         ...(ttlSeconds > 0 ? { ttl: ttlSeconds * 1000 } : {}),
-        ...(dataOnly ? {} : { notification: image ? { imageUrl: image } : undefined }),
+        ...(dataOnly
+          ? {}
+          : {
+              notification: {
+                priority: 'max',
+                defaultSound: true,
+                ...(image ? { imageUrl: image } : {}),
+              },
+            }),
       },
       ...(dataOnly
         ? {}
         : {
+            apns: {
+              headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+              payload: { aps: { sound: 'default' } },
+            },
+          }),
+      ...(dataOnly
+        ? {}
+        : {
             webpush: {
+              headers: { Urgency: 'high' },
               notification: {
                 title,
                 body,
