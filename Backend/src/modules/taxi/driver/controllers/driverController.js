@@ -2895,6 +2895,7 @@ export const goOnline = async (req, res) => {
     req.auth.sub,
     {
       isOnline: true,
+      lastSeenAt: new Date(),
       zoneId: zone?._id || null,
       ...(existingDriver.owner_id ? { 'wallet.isBlocked': false } : {}),
       location: toPoint(coordinates, "location"),

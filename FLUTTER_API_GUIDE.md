@@ -1650,6 +1650,85 @@ passed through at cost, with no commission or tax. Rate the customer after compl
 `_PROFILE_REJECTED`, `_PROFILE_SUSPENDED`. Bodies never contain addresses or codes — fetch the
 booking. There is no socket channel for this module yet; poll the booking while it is active.
 
+## 10d. Vehicle categories, trip details, ride offers over REST, staying online
+
+Added 29 Oct 2026 in answer to the app team's backend list.
+
+### Vehicle categories and luggage (user app)
+
+`GET /users/vehicle-types` now always returns a `category` on every vehicle type — group the
+picker by it instead of guessing from the name:
+
+| `category` | Meaning |
+|---|---|
+| `taxi` | normal cars (was `car` — old records are migrated) |
+| `bike` | two-wheelers, including parcel bikes |
+| `auto` | autos |
+| `luxury` | luxury cars |
+| `group` | Urbania / Traveller and other large vehicles |
+
+New field `luggage_capacity` (bags; `0` = not set) sits next to `capacity` (seats).
+For luxury cars, show `name`, `image`, `capacity`, `luggage_capacity` and `short_description`; the
+price comes from the normal fare estimate (Set Prices). The admin fills these in per car.
+
+### Trip details on a booking (user app)
+
+`POST /rides` accepts three optional fields, either at the top level or inside `tripDetails`:
+
+```json
+{ "passengers": 3, "luggage": 2, "tripPurpose": "airport" }
+// or
+{ "tripDetails": { "passengers": 3, "luggage": 2, "purpose": "airport" } }
+```
+
+- `passengers`: whole number ≥ 1. Must not exceed the vehicle type's `capacity` (seats) when set.
+- `luggage`: whole number ≥ 0. Must not exceed `luggage_capacity` when set.
+- `tripPurpose` / `purpose`: one of `airport`, `business`, `wedding`, `outstation`.
+
+A value that breaks a rule is a `400` with a readable message (e.g. *"This vehicle seats 4; choose a
+bigger vehicle for 5 passengers"*) — show it and let the user pick a bigger vehicle.
+The ride (`GET /rides/:rideId`), the driver's `rideRequest` payload, `GET /drivers/ride-offers`
+and the accepted-ride payload all carry `tripDetails: { passengers, luggage, purpose }`
+(`null` / `""` when not given).
+
+### Accept / reject a ride offer over REST (driver app)
+
+The socket `acceptRide` / `rejectRide` events still work. For the request overlay use REST — it
+does not need an open socket:
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/drivers/ride-offers/:rideId/accept` | `200 { rideId, room, status, liveStatus, acceptedAt }` |
+| POST | `/drivers/ride-offers/:rideId/reject` | `200 { rideId, rejected: true }` |
+
+Accept is still a race: `409` means another driver got it (or it was cancelled) — close the
+overlay. `403` is the wallet minimum-balance rule. On success the driver also gets the usual
+`rideAccepted` / `ride:state` socket events if a socket is open, and the rider is notified exactly
+as with the socket path.
+
+### Staying online (driver app)
+
+A driver whose app goes silent is now taken **offline automatically** after 5 minutes: no socket
+connected, and no location update or heartbeat in that time. Drivers on a ride are never touched.
+They get a push `type: driver_auto_offline` ("You are offline") and must go online again.
+
+While the app is in the background (socket closed), keep the driver online with:
+
+```
+POST /drivers/heartbeat        { "location": [longitude, latitude] }   // location optional
+→ 200 { isOnline, isOnRide, lastSeenAt }
+```
+
+Call it every 1–2 minutes, e.g. from the background location task or when an FCM ride push wakes
+the app. If it returns `isOnline: false`, show the driver they are offline.
+
+### Vehicle families (no app change)
+
+A ride only reaches drivers of the requested vehicle type, plus any types the admin lists under
+**Supported vehicle types** on that vehicle type. Example: today Rudra is on "Go Parcel" (a delivery
+type) and Kings on "Bike Go" (taxi), so they don't see each other's rides. The admin either moves
+Rudra to "Bike Go", or adds "Go Parcel" to Bike Go's supported types.
+
 ## 11. Support and chat (both apps)
 
 **Tickets** — `user`, `driver`, `owner`:

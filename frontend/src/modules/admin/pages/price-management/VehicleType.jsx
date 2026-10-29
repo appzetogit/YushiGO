@@ -169,7 +169,8 @@ const buildVehicleFormData = (selectedVehicle = {}) => ({
   transport_type: resolveVehicleTransportType(selectedVehicle),
   dispatch_type: selectedVehicle.dispatch_type || selectedVehicle.trip_dispatch_type || 'normal',
   icon_types: normalizeIconType(selectedVehicle.icon_types || selectedVehicle.icon_types_for),
-  category: String(selectedVehicle.category || ''),
+  category: String(selectedVehicle.category || '') === 'car' ? 'taxi' : String(selectedVehicle.category || ''),
+  luggage_capacity: Number(selectedVehicle.luggage_capacity || 0),
   image: selectedVehicle.image || '',
   map_icon: selectedVehicle.map_icon || selectedVehicle.icon || selectedVehicle.image || '',
   capacity: Number(selectedVehicle.capacity || 0),
@@ -224,6 +225,7 @@ const defaultFormData = {
   image: '',
   map_icon: '',
   capacity: 0,
+  luggage_capacity: 0,
   size: '',
   is_taxi: 'taxi',
   is_accept_share_ride: 0,
@@ -279,9 +281,11 @@ const DELIVERY_CATEGORY_OPTIONS = [
 
 const VEHICLE_CATEGORY_OPTIONS = [
   { id: '', label: 'Select Category' },
+  { id: 'taxi', label: 'Taxi' },
   { id: 'bike', label: 'Bike' },
-  { id: 'car', label: 'Car' },
   { id: 'auto', label: 'Auto' },
+  { id: 'luxury', label: 'Luxury' },
+  { id: 'group', label: 'Group (Urbania / Traveller)' },
 ];
 
 const TRANSPORT_TYPE_OPTIONS = [
@@ -603,6 +607,7 @@ const VehicleType = ({ mode: propMode }) => {
         icon: formData.map_icon || '',
         map_icon: formData.map_icon || '',
         capacity: Number(formData.capacity || 0),
+        luggage_capacity: Number(formData.luggage_capacity || 0),
         size: formData.size,
         is_taxi: normalizeTaxiMode(formData.is_taxi || formData.transport_type),
         is_accept_share_ride: Number(formData.is_accept_share_ride || 0),
@@ -1282,6 +1287,18 @@ const VehicleType = ({ mode: propMode }) => {
                 onChange={(e) => updateForm('capacity', e.target.value)}
                 className={inputClass}
                 placeholder="12"
+              />
+            </div>
+
+            <div>
+              <label className={labelClass}>Luggage Capacity (bags)</label>
+              <input
+                type="number"
+                min="0"
+                value={formData.luggage_capacity}
+                onChange={(e) => updateForm('luggage_capacity', e.target.value)}
+                className={inputClass}
+                placeholder="2"
               />
             </div>
 

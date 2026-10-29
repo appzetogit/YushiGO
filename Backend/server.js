@@ -8,6 +8,7 @@ import { User } from './src/modules/taxi/user/models/User.js';
 import { restoreScheduledDispatches, startDispatchRecoveryLoop } from './src/modules/taxi/services/dispatchService.js';
 import { startCarpoolExpirySweep } from './src/modules/taxi/carpool/services/carpoolExpiryService.js';
 import { startDriverHireSweep } from './src/modules/taxi/driverHire/services/sweepService.js';
+import { startDriverPresenceSweep } from './src/modules/taxi/driver/services/driverPresenceService.js';
 
 const bootstrap = async () => {
   await connectDatabase();
@@ -31,6 +32,8 @@ const bootstrap = async () => {
   // Search a Driver: offer timeouts, no-driver expiry, licence reminders.
   // DRIVER_HIRE_SWEEP_ENABLED=false turns it off.
   startDriverHireSweep();
+  // Takes drivers whose app went silent offline. DRIVER_PRESENCE_SWEEP_ENABLED=false turns it off.
+  startDriverPresenceSweep();
 
   httpServer.listen(env.port, () => {
     const redisStatus = getRedisStatus();

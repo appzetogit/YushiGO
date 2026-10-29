@@ -119,6 +119,7 @@ import {
   uploadPoolingOnboardingImageRequest,
 } from "../controllers/driverController.js";
 import { triggerDriverSosAlert } from '../../safety/controllers/safetyController.js';
+import { acceptRideOffer, driverHeartbeat, rejectRideOffer } from '../controllers/rideOfferController.js';
 
 export const driverRouter = Router();
 
@@ -300,6 +301,21 @@ driverRouter.get(
   "/ride-offers",
   authenticate(["driver"]),
   asyncHandler(getDriverRideOffers),
+);
+driverRouter.post(
+  "/ride-offers/:rideId/accept",
+  authenticate(["driver"]),
+  asyncHandler(acceptRideOffer),
+);
+driverRouter.post(
+  "/ride-offers/:rideId/reject",
+  authenticate(["driver"]),
+  asyncHandler(rejectRideOffer),
+);
+driverRouter.post(
+  "/heartbeat",
+  authenticate(["driver"]),
+  asyncHandler(driverHeartbeat),
 );
 driverRouter.post(
   "/fcm-token",

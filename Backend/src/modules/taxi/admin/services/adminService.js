@@ -58,6 +58,7 @@ import {
   serializeDriverWallet,
 } from '../../driver/services/walletService.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS, VEHICLE_TYPES } from '../../constants/index.js';
+import { VEHICLE_TYPE_CATEGORIES } from '../models/Vehicle.js';
 import {
   cancelRideByAdmin,
   emitToDriver,
@@ -6559,6 +6560,38 @@ export const deleteOngoingRide = async (rideId) => {
   };
 };
 
+/**
+ * What the apps group vehicle types by: taxi, bike, auto, luxury or group. A blank
+ * (or the old 'car') category is filled in from the icon type, so the app never has
+ * to guess from the name.
+ */
+const resolveVehicleCategory = (item = {}) => {
+  const stored = String(item.category || '').trim().toLowerCase();
+  if (stored === 'car') return 'taxi';
+  if (VEHICLE_TYPE_CATEGORIES.includes(stored)) return stored;
+
+  const icon = String(item.icon_types || '').trim().toLowerCase();
+  if (icon === 'bike') return 'bike';
+  if (icon === 'auto') return 'auto';
+  if (['luxary', 'premium'].includes(icon)) return 'luxury';
+  return 'taxi';
+};
+
+const normalizeVehicleCategoryInput = (value) => {
+  const category = String(value || '').trim().toLowerCase();
+  if (!category) return '';
+  if (category === 'car') return 'taxi';
+  if (!VEHICLE_TYPE_CATEGORIES.includes(category)) {
+    throw new ApiError(400, `category must be one of: ${VEHICLE_TYPE_CATEGORIES.join(', ')}`);
+  }
+  return category;
+};
+
+const normalizeLuggageCapacity = (value) => {
+  const count = Math.floor(Number(value || 0));
+  return Number.isFinite(count) && count > 0 ? count : 0;
+};
+
 export const listVehicleTypes = async (queryParams = {}) => {
   const query = {};
   if (queryParams.transport_type) {
@@ -6568,13 +6601,14 @@ export const listVehicleTypes = async (queryParams = {}) => {
       : { $in: [normalizedTransportType, 'both'] };
   }
   const items = await Vehicle.find(query)
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active createdAt updatedAt')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity luggage_capacity image icon map_icon status active createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean();
   const results = items.map((item) => ({
     ...item,
     ...normalizeVehicleCommissionConfig(item),
-    category: item.category || '',
+    category: resolveVehicleCategory(item),
+    luggage_capacity: Number(item.luggage_capacity || 0),
     icon: item.map_icon || item.icon || item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
@@ -6605,7 +6639,8 @@ export const listVehicleCatalog = async () => {
     ...item,
     ...normalizeVehicleCommissionConfig(item),
     id: String(item._id),
-    category: item.category || '',
+    category: resolveVehicleCategory(item),
+    luggage_capacity: Number(item.luggage_capacity || 0),
     icon: item.map_icon || item.icon || item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
@@ -6669,7 +6704,8 @@ export const getVehicleTypeById = async (id) => {
     ...item,
     ...normalizeVehicleCommissionConfig(item),
     id: String(item._id),
-    category: item.category || '',
+    category: resolveVehicleCategory(item),
+    luggage_capacity: Number(item.luggage_capacity || 0),
     icon: item.map_icon || item.icon || item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
@@ -6692,7 +6728,7 @@ export const listPublicVehicleCatalog = async () => {
   }
 
   const items = await Vehicle.find()
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity luggage_capacity image icon map_icon status active')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -6705,7 +6741,8 @@ export const listPublicVehicleCatalog = async () => {
     transport_type: item.transport_type || 'taxi',
     dispatch_type: item.dispatch_type || 'normal',
     icon_types: item.icon_types || 'car',
-    category: item.category || '',
+    category: resolveVehicleCategory(item),
+    luggage_capacity: Number(item.luggage_capacity || 0),
     delivery_category: item.delivery_category || '',
     delivery_distance_pricing: normalizeDeliveryDistancePricing(item.delivery_distance_pricing),
     parcel_limits: normalizeParcelLimits(item.parcel_limits),
@@ -6793,8 +6830,9 @@ export const createVehicleType = async (payload) => {
     transport_type: transportType,
     dispatch_type: payload.dispatch_type || 'normal',
     icon_types: payload.icon_types || 'car',
-    category: String(payload.category || '').trim().toLowerCase(),
+    category: normalizeVehicleCategoryInput(payload.category),
     capacity: Number(payload.capacity || 0),
+    luggage_capacity: normalizeLuggageCapacity(payload.luggage_capacity),
     size: payload.size ?? '',
     is_taxi: payload.is_taxi || transportType,
     is_accept_share_ride: Number(payload.is_accept_share_ride || 0) ? 1 : 0,
@@ -6858,7 +6896,11 @@ export const updateVehicleType = async (id, payload) => {
     vehicle.icon_types = payload.icon_types || 'car';
   }
   if (payload.category !== undefined) {
-    vehicle.category = String(payload.category || '').trim().toLowerCase();
+    vehicle.category = normalizeVehicleCategoryInput(payload.category);
+  }
+
+  if (payload.luggage_capacity !== undefined) {
+    vehicle.luggage_capacity = normalizeLuggageCapacity(payload.luggage_capacity);
   }
   if (payload.image !== undefined) {
     vehicle.image = payload.image ?? '';

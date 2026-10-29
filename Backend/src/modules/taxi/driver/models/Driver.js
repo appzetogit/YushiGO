@@ -125,6 +125,12 @@ const driverSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    // Last sign of life from the driver app (socket connect, location, heartbeat).
+    // The presence sweep takes an online driver offline when this goes stale.
+    lastSeenAt: {
+      type: Date,
+      default: null,
+    },
     vehicleType: {
       type: String,
       enum: VEHICLE_TYPES,

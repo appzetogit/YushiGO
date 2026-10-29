@@ -16,7 +16,7 @@ import {
   RIDE_STATUS,
 } from '../constants/index.js';
 import { Delivery } from '../user/models/Delivery.js';
-import { getRideRoom, resolveSetPriceForRide } from './rideService.js';
+import { getRideRoom, resolveSetPriceForRide, serializeTripDetails } from './rideService.js';
 import { syncStudentRideWithDispatch } from '../studentRide/services/statusSyncService.js';
 import { studentDriverBlock } from '../studentRide/services/driverPayload.js';
 import { visibleRideOtp } from '../user/services/parcelPolicy.js';
@@ -746,6 +746,7 @@ const buildRideRequestPayload = ({
       paymentMethod: ride.paymentMethod,
       parcel: ride.parcel || null,
       intercity: ride.intercity || null,
+      tripDetails: serializeTripDetails(ride),
       ...studentDriverBlock(ride),
       radius: effectiveRadius,
       attempt: attemptIndex + 1,
@@ -1655,6 +1656,7 @@ export const notifyRideAccepted = async (ride) => {
     vehicleIconUrl: populatedRide.vehicleIconUrl || '',
     parcel: populatedRide.parcel || null,
     intercity: populatedRide.intercity || null,
+    tripDetails: serializeTripDetails(populatedRide),
     commissionAmount: populatedRide.commissionAmount,
     driverEarnings: populatedRide.driverEarnings,
     pickupLocation: populatedRide.pickupLocation,

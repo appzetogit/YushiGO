@@ -117,6 +117,16 @@ const rideSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    // What the customer told us about the trip: head count, bags and why they're going.
+    tripDetails: {
+      passengers: { type: Number, default: null, min: 1 },
+      luggage: { type: Number, default: null, min: 0 },
+      purpose: {
+        type: String,
+        enum: ['', 'airport', 'business', 'wedding', 'outstation'],
+        default: '',
+      },
+    },
     intercity: {
       bookingId: {
         type: String,

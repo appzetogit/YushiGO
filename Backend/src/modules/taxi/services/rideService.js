@@ -427,6 +427,51 @@ const normalizeStudentSafetyPayload = (studentSafety = {}) => {
   };
 };
 
+export const TRIP_PURPOSES = ['airport', 'business', 'wedding', 'outstation'];
+
+export const serializeTripDetails = (ride = {}) => ({
+  passengers: ride?.tripDetails?.passengers ?? null,
+  luggage: ride?.tripDetails?.luggage ?? null,
+  purpose: ride?.tripDetails?.purpose || '',
+});
+
+/**
+ * passengers / luggage / purpose from the booking. Each is optional; a value that is
+ * there must be sensible and fit the vehicle type's seats and luggage capacity.
+ */
+export const normalizeTripDetails = (input = {}, vehicle = null) => {
+  const details = input && typeof input === 'object' ? input : {};
+  const readCount = (value, field, min) => {
+    if (value === undefined || value === null || value === '') return null;
+    const count = Number(value);
+    if (!Number.isInteger(count) || count < min || count > 100) {
+      throw new ApiError(400, `${field} must be a whole number of at least ${min}`);
+    }
+    return count;
+  };
+
+  const passengers = readCount(details.passengers, 'passengers', 1);
+  const luggage = readCount(details.luggage, 'luggage', 0);
+  const purpose = String(details.purpose ?? details.tripPurpose ?? '').trim().toLowerCase();
+
+  if (purpose && !TRIP_PURPOSES.includes(purpose)) {
+    throw new ApiError(400, `tripPurpose must be one of: ${TRIP_PURPOSES.join(', ')}`);
+  }
+
+  const seats = Number(vehicle?.capacity || 0);
+  const isPassengerVehicle = ['taxi', 'both', '', undefined].includes(vehicle?.transport_type);
+  if (passengers !== null && isPassengerVehicle && seats > 0 && passengers > seats) {
+    throw new ApiError(400, `This vehicle seats ${seats}; choose a bigger vehicle for ${passengers} passengers`);
+  }
+
+  const bags = Number(vehicle?.luggage_capacity || 0);
+  if (luggage !== null && bags > 0 && luggage > bags) {
+    throw new ApiError(400, `This vehicle takes ${bags} bag(s); choose a bigger vehicle for ${luggage}`);
+  }
+
+  return { passengers, luggage, purpose };
+};
+
 const normalizeIntercityPayload = (intercity = {}) => ({
   bookingId: String(intercity.bookingId || '').trim(),
   fromCity: String(intercity.fromCity || '').trim(),
@@ -977,6 +1022,7 @@ export const createRideRecord = async ({
   medicine,
   studentSafety,
   intercity,
+  tripDetails,
   promo_code,
   zone_id,
   service_location_id,
@@ -1002,16 +1048,25 @@ export const createRideRecord = async ({
     throw new ApiError(400, 'fare must be a positive number or zero');
   }
 
-  const dispatchVehicleTypeIds = normalizeVehicleTypeIds(vehicleTypeIds, vehicleTypeId);
+  const requestedVehicleTypeIds = normalizeVehicleTypeIds(vehicleTypeIds, vehicleTypeId);
 
-  if (dispatchVehicleTypeIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+  if (requestedVehicleTypeIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
     throw new ApiError(400, 'vehicleTypeId is invalid');
   }
 
-  const primaryVehicleTypeId = dispatchVehicleTypeIds[0] || null;
+  const primaryVehicleTypeId = requestedVehicleTypeIds[0] || null;
   const primaryVehicle = primaryVehicleTypeId
-    ? await Vehicle.findById(primaryVehicleTypeId).select('icon map_icon image dispatch_type admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner').lean()
+    ? await Vehicle.findById(primaryVehicleTypeId).select('icon map_icon image dispatch_type capacity luggage_capacity transport_type supported_other_vehicle_types admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner').lean()
     : null;
+  // Drivers of the vehicle types the admin lists under "Supported vehicle types" also
+  // get this ride, so one family (e.g. two bike types) can share requests.
+  const dispatchVehicleTypeIds = [
+    ...new Set([
+      ...requestedVehicleTypeIds,
+      ...(primaryVehicle?.supported_other_vehicle_types || []).map(String),
+    ]),
+  ];
+  const normalizedTripDetails = normalizeTripDetails(tripDetails, primaryVehicle);
   const resolvedVehicleIconUrl = String(
     vehicleIconUrl || primaryVehicle?.image || primaryVehicle?.map_icon || primaryVehicle?.icon || '',
   ).trim();
@@ -1210,6 +1265,7 @@ export const createRideRecord = async ({
       medicine: normalizeMedicinePayload(medicine),
       studentSafety: normalizeStudentSafetyPayload(studentSafety),
       intercity: normalizeIntercityPayload(intercity),
+      tripDetails: normalizedTripDetails,
       scheduledAt: normalizedScheduledAt,
       status: RIDE_STATUS.SEARCHING,
       liveStatus: RIDE_LIVE_STATUS.SEARCHING,
@@ -1268,6 +1324,7 @@ export const createRideRecord = async ({
             medicine: normalizeMedicinePayload(medicine),
             studentSafety: normalizeStudentSafetyPayload(studentSafety),
             intercity: normalizeIntercityPayload(intercity),
+            tripDetails: normalizedTripDetails,
             scheduledAt: normalizedScheduledAt,
             status: RIDE_STATUS.SEARCHING,
             liveStatus: RIDE_LIVE_STATUS.SEARCHING,
@@ -1527,6 +1584,7 @@ export const serializeRideRealtime = (ride) => ({
   parcel: ride.deliveryId?.parcel || ride.parcel || null,
   medicine: ride.deliveryId?.medicine || ride.medicine || null,
   intercity: ride.intercity || null,
+  tripDetails: serializeTripDetails(ride),
   commissionAmount: ride.commissionAmount,
   driverEarnings: ride.driverEarnings,
   promo: ride.promo?.code ? ride.promo : null,
@@ -1800,6 +1858,8 @@ export const acceptRideAssignment = async ({ rideId, driverId }) => {
         _id: driverId,
         isOnline: true,
         isOnRide: false,
+        approve: { $ne: false },
+        status: { $ne: 'inactive' },
         'wallet.isBlocked': { $ne: true },
         ...driverVehicleFilter,
       }).session(session);

@@ -115,7 +115,7 @@ export const configureTaxiSocketServer = (httpServer) => {
     socket.join(getSupportRoleRoom(identity.role));
 
     if (identity.role === 'driver') {
-      await Driver.findByIdAndUpdate(identity.sub, { socketId: socket.id });
+      await Driver.findByIdAndUpdate(identity.sub, { socketId: socket.id, lastSeenAt: new Date() });
       const previousDriverState = driverLocationState.get(identity.sub) || {};
       driverLocationState.set(identity.sub, {
         ...previousDriverState,
@@ -228,6 +228,7 @@ export const configureTaxiSocketServer = (httpServer) => {
         if (shouldWriteDriverState) {
           await Driver.findByIdAndUpdate(identity.sub, {
             socketId: socket.id,
+            lastSeenAt: new Date(),
             location: toPoint(normalizedCoords, 'coordinates'),
             zoneId: zone?._id || null,
           });

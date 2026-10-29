@@ -16,12 +16,11 @@ const VEHICLE_ICON_TYPES = [
   'suv',
 ];
 
-const VEHICLE_CATEGORIES = [
-  '',
-  'bike',
-  'car',
-  'auto',
-];
+// What the apps group vehicle types by. 'car' is the old name for 'taxi' and is
+// still accepted so existing records keep saving.
+export const VEHICLE_TYPE_CATEGORIES = ['taxi', 'bike', 'auto', 'luxury', 'group'];
+
+const VEHICLE_CATEGORIES = ['', ...VEHICLE_TYPE_CATEGORIES, 'car'];
 
 const DELIVERY_CATEGORY_TYPES = [
   '',
@@ -83,6 +82,12 @@ const vehicleSchema = new mongoose.Schema(
     capacity: {
       type: Number,
       default: 0,
+    },
+    // Bags the vehicle takes; 0 = not set.
+    luggage_capacity: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
     size: {
       type: String,

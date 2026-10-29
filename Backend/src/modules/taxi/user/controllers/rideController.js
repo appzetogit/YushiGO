@@ -342,6 +342,11 @@ export const createRide = async (req, res) => {
     userMaxBidFare,
     bidStepAmount,
     studentSafety,
+    tripDetails: req.body.tripDetails || {
+      passengers: req.body.passengers,
+      luggage: req.body.luggage,
+      purpose: req.body.tripPurpose,
+    },
   });
 
   await startDispatchFlow(ride);
