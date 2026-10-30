@@ -137,9 +137,15 @@ export const getSchedules = async (req, res) => {
         farePerSeat: bus.baseFare || 250,
         totalSeats: bus.totalSeats || 15,
         availableSeats: Math.max(1, (bus.totalSeats || 15) - 2),
-        rating: 4.8,
+        rating: bus.rating || 4.8,
         activeDays: sch.activeDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
         stops: bus.stops || [],
+        image: bus.image || bus.coverImage || '',
+        coverImage: bus.coverImage || bus.image || '',
+        galleryImages: bus.galleryImages || [],
+        amenities: bus.amenities || [],
+        coachType: bus.coachType || bus.busType || '',
+        busCategory: bus.busCategory || '',
         travelDate,
       });
     }
