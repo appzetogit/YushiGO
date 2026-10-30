@@ -170,6 +170,7 @@ const buildVehicleFormData = (selectedVehicle = {}) => ({
   dispatch_type: selectedVehicle.dispatch_type || selectedVehicle.trip_dispatch_type || 'normal',
   icon_types: normalizeIconType(selectedVehicle.icon_types || selectedVehicle.icon_types_for),
   category: String(selectedVehicle.category || '') === 'car' ? 'taxi' : String(selectedVehicle.category || ''),
+  is_luxury: Boolean(selectedVehicle.is_luxury || String(selectedVehicle.category || '').toLowerCase() === 'luxury'),
   luggage_capacity: Number(selectedVehicle.luggage_capacity || 0),
   image: selectedVehicle.image || '',
   map_icon: selectedVehicle.map_icon || selectedVehicle.icon || selectedVehicle.image || '',
@@ -222,6 +223,7 @@ const defaultFormData = {
   dispatch_type: 'normal',
   icon_types: 'car',
   category: '',
+  is_luxury: false,
   image: '',
   map_icon: '',
   capacity: 0,
@@ -602,7 +604,8 @@ const VehicleType = ({ mode: propMode }) => {
         transport_type: normalizeTransportType(formData.transport_type),
         dispatch_type: formData.dispatch_type,
         icon_types: normalizeIconType(formData.icon_types),
-        category: formData.category,
+        category: formData.is_luxury && (!formData.category || formData.category === 'taxi') ? 'luxury' : formData.category,
+        is_luxury: Boolean(formData.is_luxury || formData.category === 'luxury'),
         image: formData.image || '',
         icon: formData.map_icon || '',
         map_icon: formData.map_icon || '',
@@ -779,15 +782,22 @@ const VehicleType = ({ mode: propMode }) => {
                       </div>
                     </td>
                     <td className="px-6 py-5">
-                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                        String(vehicle.transport_type || '').toLowerCase() === 'delivery'
-                          ? 'bg-orange-50 text-orange-600'
-                          : String(vehicle.transport_type || '').toLowerCase() === 'both'
-                            ? 'bg-emerald-50 text-emerald-600'
-                            : 'bg-blue-50 text-blue-600'
-                      }`}>
-                        {vehicle.transport_type}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                          String(vehicle.transport_type || '').toLowerCase() === 'delivery'
+                            ? 'bg-orange-50 text-orange-600'
+                            : String(vehicle.transport_type || '').toLowerCase() === 'both'
+                              ? 'bg-emerald-50 text-emerald-600'
+                              : 'bg-blue-50 text-blue-600'
+                        }`}>
+                          {vehicle.transport_type}
+                        </span>
+                        {Boolean(vehicle.is_luxury || vehicle.category === 'luxury') && (
+                          <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 border border-amber-200">
+                            Luxury
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-5 text-sm font-medium text-slate-700">{vehicle.trip_dispatch_type || vehicle.dispatch_type || 'normal'}</td>
                     <td className="px-6 py-5">
@@ -1395,6 +1405,26 @@ const VehicleType = ({ mode: propMode }) => {
                 This form is fully dynamic from your DB. Transport type, icon type, supported vehicles, and preferences all save to the real vehicle catalog.
               </p>
             </div>
+            <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(formData.is_luxury || formData.category === 'luxury')}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  updateForm('is_luxury', checked);
+                  if (checked && (!formData.category || formData.category === 'taxi')) {
+                    updateForm('category', 'luxury');
+                  } else if (!checked && formData.category === 'luxury') {
+                    updateForm('category', 'taxi');
+                  }
+                }}
+                className="h-4 w-4 rounded border-slate-300 text-yellow-500 focus:ring-yellow-400"
+              />
+              <span>
+                <strong className="text-slate-900">Luxury Vehicle</strong>
+                <span className="block text-xs text-slate-500 font-normal">Enable to display this vehicle in the Luxury Module flow in user apps</span>
+              </span>
+            </label>
             <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"

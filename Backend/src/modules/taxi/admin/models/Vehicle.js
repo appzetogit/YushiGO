@@ -79,6 +79,10 @@ const vehicleSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    is_luxury: {
+      type: Boolean,
+      default: false,
+    },
     capacity: {
       type: Number,
       default: 0,
@@ -220,6 +224,12 @@ vehicleSchema.pre('save', function syncActiveStatus() {
     this.active = this.status === 1;
   } else if (this.isModified('active')) {
     this.status = this.active ? 1 : 0;
+  }
+
+  if (this.category === 'luxury') {
+    this.is_luxury = true;
+  } else if (this.is_luxury && (!this.category || this.category === 'taxi')) {
+    this.category = 'luxury';
   }
 });
 
