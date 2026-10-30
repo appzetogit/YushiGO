@@ -369,6 +369,7 @@ export const createStudentRide = async ({ userId, payload, createDispatchRide })
       // Several children: one ride, priced by the admin's multi-child rule.
       const quote = applyMultiChildFare(await quoteStudentRideFare({
         vehicleTypeId: payload?.vehicle_type_id ?? payload?.vehicleTypeId,
+        ridePreference: payload?.ride_preference ?? payload?.ridePreference ?? payload?.vehicle_preference,
         pickup,
         destination,
         serviceLocationId: payload?.service_location_id || null,

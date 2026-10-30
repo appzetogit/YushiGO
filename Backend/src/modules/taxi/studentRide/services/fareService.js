@@ -60,13 +60,47 @@ export const resolveDistanceMeters = ({ pickup, destination, providedMeters }) =
  */
 export const quoteStudentRideFare = async ({
   vehicleTypeId,
+  ridePreference = null,
   pickup,
   destination,
   serviceLocationId = null,
   zoneId = null,
   distanceMeters = null,
 }) => {
-  if (!vehicleTypeId) {
+  let effectiveVehicleTypeId = vehicleTypeId;
+
+  if (!effectiveVehicleTypeId) {
+    const candidateVehicles = await Vehicle.find({
+      transport_type: { $in: ['taxi', 'both'] },
+      status: 1,
+    })
+      .select('_id name icon_types category allowed_for_student_ride')
+      .lean();
+
+    const allowed = candidateVehicles.filter(vehicleAllowedForStudentRide);
+    const pref = String(ridePreference || '').toLowerCase();
+    let matched = null;
+    if (pref.includes('auto') || pref.includes('rickshaw')) {
+      matched = allowed.find((v) =>
+        ['auto', 'rickshaw'].some((k) =>
+          (v.icon_types || '').toLowerCase().includes(k) ||
+          (v.category || '').toLowerCase().includes(k) ||
+          (v.name || '').toLowerCase().includes(k)
+        )
+      );
+    } else if (pref.includes('van') || pref.includes('bus')) {
+      matched = allowed.find((v) =>
+        ['van', 'bus', 'group'].some((k) =>
+          (v.icon_types || '').toLowerCase().includes(k) ||
+          (v.category || '').toLowerCase().includes(k) ||
+          (v.name || '').toLowerCase().includes(k)
+        )
+      );
+    }
+    effectiveVehicleTypeId = (matched || allowed[0])?._id;
+  }
+
+  if (!effectiveVehicleTypeId) {
     throw studentRideError(
       422,
       STUDENT_RIDE_ERROR_CODES.RIDE_NOT_FOUND,
@@ -74,7 +108,7 @@ export const quoteStudentRideFare = async ({
     );
   }
 
-  const vehicle = await Vehicle.findById(vehicleTypeId)
+  let vehicle = await Vehicle.findById(effectiveVehicleTypeId)
     .select('name service_tax icon_types category allowed_for_student_ride')
     .lean();
 
@@ -95,15 +129,41 @@ export const quoteStudentRideFare = async ({
     );
   }
 
-  const pricing = await resolveSetPriceForRide({
+  let pricing = await resolveSetPriceForRide({
     zoneId,
     serviceLocationId,
     // Student rides run on the taxi pricing table; there is no separate student
     // tariff, and inventing one would leave this unpriced until an admin created
     // rows for it.
     transportType: 'taxi',
-    vehicleTypeId,
+    vehicleTypeId: effectiveVehicleTypeId,
   });
+
+  // If the auto-matched vehicle type has no pricing row, fall back to any allowed vehicle that does
+  if (!pricing && !vehicleTypeId) {
+    const candidateVehicles = await Vehicle.find({
+      transport_type: { $in: ['taxi', 'both'] },
+      status: 1,
+    })
+      .select('_id name icon_types category allowed_for_student_ride')
+      .lean();
+
+    const allowed = candidateVehicles.filter(vehicleAllowedForStudentRide);
+    for (const altVehicle of allowed) {
+      const altPricing = await resolveSetPriceForRide({
+        zoneId,
+        serviceLocationId,
+        transportType: 'taxi',
+        vehicleTypeId: altVehicle._id,
+      });
+      if (altPricing) {
+        pricing = altPricing;
+        effectiveVehicleTypeId = altVehicle._id;
+        vehicle = altVehicle;
+        break;
+      }
+    }
+  }
 
   if (!pricing) {
     throw studentRideError(
@@ -137,7 +197,7 @@ export const quoteStudentRideFare = async ({
     currency: 'INR',
     distanceMeters: resolvedMeters,
     distanceSource: source,
-    vehicleTypeId: String(vehicleTypeId),
+    vehicleTypeId: String(effectiveVehicleTypeId),
     vehicleTypeName: vehicle.name || '',
     breakdown: {
       basePrice: round2(basePrice),

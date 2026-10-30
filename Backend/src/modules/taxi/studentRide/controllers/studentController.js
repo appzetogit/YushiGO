@@ -164,6 +164,7 @@ export const quoteStudentRide = async (req, res) => {
 
   const single = await fareService.quoteStudentRideFare({
     vehicleTypeId: req.body?.vehicle_type_id ?? req.body?.vehicleTypeId,
+    ridePreference: req.body?.ride_preference ?? req.body?.ridePreference ?? req.body?.vehicle_preference,
     pickup,
     destination,
     serviceLocationId: req.body?.service_location_id || null,
