@@ -126,6 +126,13 @@ export const configureTaxiSocketServer = (httpServer) => {
       });
     }
 
+    socket.on('joinDriver', ({ driverId } = {}) => {
+      const targetDriverId = driverId || (identity?.role === 'driver' ? identity.sub : null);
+      if (targetDriverId) {
+        socket.join(`driver:${targetDriverId}`);
+      }
+    });
+
     socket.on('chat:join', ({ conversationKey }) => {
       if (conversationKey) {
         const parsed = parseSupportConversationKey(conversationKey);

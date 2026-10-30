@@ -9,6 +9,7 @@ import { careerRouter } from '../career/routes/careerRoutes.js';
 import { studentRideModuleRouter } from '../studentRide/routes/index.js';
 import { carpoolModuleRouter } from '../carpool/routes/index.js';
 import { driverHireModuleRouter } from '../driverHire/routes/index.js';
+import { groupTravelRouter } from '../user/routes/groupTravelRoutes.js';
 
 export const taxiRouter = Router();
 
@@ -22,3 +23,4 @@ taxiRouter.use(careerRouter);
 taxiRouter.use(studentRideModuleRouter);
 taxiRouter.use(carpoolModuleRouter);
 taxiRouter.use(driverHireModuleRouter);
+taxiRouter.use(groupTravelRouter);
