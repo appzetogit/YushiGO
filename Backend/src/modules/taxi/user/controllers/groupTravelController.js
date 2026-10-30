@@ -355,7 +355,7 @@ export const searchVehicles = async (req, res) => {
 
   for (const v of vehicles) {
     const setPrice = await SetPrice.findOne({
-      vehicle_type_id: v._id,
+      $or: [{ vehicle_type: v._id }, { vehicle_type_id: v._id }],
       status: 'active',
     }).lean();
 
