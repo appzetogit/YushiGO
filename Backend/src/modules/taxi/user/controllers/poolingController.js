@@ -5,7 +5,7 @@ import { PoolingBooking } from '../../admin/models/PoolingBooking.js';
 import { PoolingSeatReservation } from '../../admin/models/PoolingSeatReservation.js';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { ApiError } from '../../../../utils/ApiError.js';
-import { resolveConfiguredGatewayCredentials } from '../../services/paymentGatewayService.js';
+import { resolveConfiguredGatewayCredentials, toGatewayErrorStatus } from '../../services/paymentGatewayService.js';
 
 const ok = (res, data, message) => res.status(200).json({ success: true, data, message });
 const created = (res, data, message) => res.status(201).json({ success: true, data, message });
@@ -48,7 +48,7 @@ const razorpayRequest = async ({ method, path, body, keyId, keySecret }) => {
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status || 502, payload?.error?.description || payload?.error?.message || 'Razorpay request failed');
+    throw new ApiError(toGatewayErrorStatus(response.status), payload?.error?.description || payload?.error?.message || 'Razorpay request failed');
   }
 
   return payload;

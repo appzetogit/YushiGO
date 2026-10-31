@@ -75,7 +75,7 @@ import {
   updateBusService,
   updateRentalVehicleType,
 } from "../../admin/services/adminService.js";
-import { resolveConfiguredGatewayCredentials } from "../../services/paymentGatewayService.js";
+import { resolveConfiguredGatewayCredentials, toGatewayErrorStatus } from "../../services/paymentGatewayService.js";
 import { assignPushTokenToEntity } from "../../services/pushTokenService.js";
 import {
   completeDriverOnboarding,
@@ -943,7 +943,7 @@ const ownerRazorpayRequest = async ({ method, path, body, keyId, keySecret }) =>
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status || 502, payload?.error?.description || payload?.error?.message || "Razorpay request failed");
+    throw new ApiError(toGatewayErrorStatus(response.status), payload?.error?.description || payload?.error?.message || "Razorpay request failed");
   }
 
   return payload;
@@ -1471,7 +1471,7 @@ const razorpayRequest = async ({ method, path, body }) => {
 
   if (!response.ok) {
     throw new ApiError(
-      response.status || 502,
+      toGatewayErrorStatus(response.status),
       payload?.error?.description ||
         payload?.error?.message ||
         "Razorpay QR request failed",
@@ -6584,7 +6584,7 @@ const getPhonePeAccessToken = async ({
       response: summarizePhonePePayload(payload || {}),
     });
     throw new ApiError(
-      response.status || 502,
+      toGatewayErrorStatus(response.status),
       payload?.message || payload?.error_description || payload?.error || "PhonePe authorization failed",
     );
   }
@@ -6734,7 +6734,7 @@ const fetchRazorpay = async ({ method, path, body, keyId, keySecret }) => {
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiError(
-      response.status || 502,
+      toGatewayErrorStatus(response.status),
       payload?.error?.description ||
         payload?.error?.message ||
         "Razorpay request failed",

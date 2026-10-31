@@ -182,6 +182,11 @@ export const getPublicActivePaymentGateway = async () => {
   };
 };
 
+// A gateway rejecting our merchant keys (401/403) is a server-side config problem.
+// Never forward it as our own 401, or the apps treat it as an expired session and log out.
+export const toGatewayErrorStatus = (status) =>
+  !status || status === 401 || status === 403 ? 502 : status;
+
 export const resolveConfiguredGatewayCredentials = async (gatewayKey) => {
   const spec = PAYMENT_GATEWAY_SPECS[gatewayKey];
   if (!spec) {

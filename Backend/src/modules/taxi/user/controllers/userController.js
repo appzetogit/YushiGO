@@ -12,7 +12,7 @@ import { Driver } from '../../driver/models/Driver.js';
 import { comparePassword, hashPassword, signAccessToken } from '../services/authService.js';
 import { env } from '../../../../config/env.js';
 import { uploadDataUrlToCloudinary } from '../../../../utils/cloudinaryUpload.js';
-import { resolveConfiguredGatewayCredentials } from '../../services/paymentGatewayService.js';
+import { resolveConfiguredGatewayCredentials, toGatewayErrorStatus } from '../../services/paymentGatewayService.js';
 import { getTransportRideSettings } from '../../services/transportSettingsService.js';
 import {
   consumeUserSignupSession,
@@ -358,7 +358,7 @@ const getPhonePeAccessToken = async ({
       response: summarizePhonePePayload(payload || {}),
     });
     throw new ApiError(
-      response.status || 502,
+      toGatewayErrorStatus(response.status),
       payload?.message || payload?.error_description || payload?.error || 'PhonePe authorization failed',
     );
   }
@@ -507,7 +507,7 @@ const razorpayRequest = async ({ method, path, body, keyId, keySecret }) => {
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status || 502, payload?.error?.description || payload?.error?.message || 'Razorpay request failed');
+    throw new ApiError(toGatewayErrorStatus(response.status), payload?.error?.description || payload?.error?.message || 'Razorpay request failed');
   }
 
   return payload;

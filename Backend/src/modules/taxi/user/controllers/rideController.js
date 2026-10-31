@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 import { ApiError } from '../../../../utils/ApiError.js';
 import { normalizePoint } from '../../../../utils/geo.js';
-import { resolveConfiguredGatewayCredentials } from '../../services/paymentGatewayService.js';
+import { resolveConfiguredGatewayCredentials, toGatewayErrorStatus } from '../../services/paymentGatewayService.js';
 import { Driver } from '../../driver/models/Driver.js';
 import { WalletTransaction } from '../../driver/models/WalletTransaction.js';
 import { applyDriverWalletAdjustment, serializeDriverWallet } from '../../driver/services/walletService.js';
@@ -295,7 +295,7 @@ const razorpayRequest = async ({ method, path, body, keyId, keySecret }) => {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new ApiError(response.status || 502, payload?.error?.description || payload?.error?.message || 'Razorpay request failed');
+    throw new ApiError(toGatewayErrorStatus(response.status), payload?.error?.description || payload?.error?.message || 'Razorpay request failed');
   }
 
   return payload;
