@@ -245,11 +245,9 @@ const seedVehicleTypes = async () => {
 
 const seedPrices = async (vehicles) => {
   // Same rule as dispatch (matchingService): a zone is usable unless explicitly switched off.
-  const zones = await Zone.find({ active: { $ne: false }, status: { $ne: 'inactive' } }).select('_id name').lean();
-  if (zones.length === 0) {
-    log('no active zones found; skipping prices (create a zone, then re-run)');
-    return;
-  }
+  const activeZones = await Zone.find({ active: { $ne: false }, status: { $ne: 'inactive' } }).select('_id name').lean();
+  // Without zones the ride prices are global (zone_id null), as the existing ones are.
+  const zones = activeZones.length > 0 ? activeZones : [{ _id: null, name: 'all areas (no zones set up)' }];
   for (const { spec, vehicle } of vehicles) {
     for (const zone of zones) {
       const exists = vehicle

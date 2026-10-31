@@ -38,11 +38,6 @@ await mongoose.connect(process.env.MONGODB_URI, { autoIndex: false });
 
 const userId = new mongoose.Types.ObjectId();
 await mongoose.connection.collection('taxiusers').insertOne({ _id: userId, name: 'Asha', phone: '9000000011', active: true });
-await mongoose.connection.collection('taxizones').insertMany([
-  { name: 'Indore', active: true, status: 'active' },
-  { name: 'Legacy zone', active: true }, // no status field, as older zones are stored
-  { name: 'Closed zone', active: true, status: 'inactive' },
-]);
 await mongoose.connection.collection('taxiadminbusinesssettings').insertOne({
   scope: 'default',
   transport_ride: { enable_bus_service: '1' },
@@ -54,6 +49,18 @@ const runSeed = (...args) =>
     env: process.env,
     encoding: 'utf8',
   });
+
+console.log('seed without zones');
+runSeed('--apply');
+check('global price per vehicle when there are no zones', (await mongoose.connection.collection('taxisetprices').countDocuments({ zone_id: null })) === 4);
+for (const name of ['taxivehicles', 'taxisetprices', 'taxibusservices']) {
+  await mongoose.connection.collection(name).deleteMany({});
+}
+await mongoose.connection.collection('taxizones').insertMany([
+  { name: 'Indore', active: true, status: 'active' },
+  { name: 'Legacy zone', active: true }, // no status field, as older zones are stored
+  { name: 'Closed zone', active: true, status: 'inactive' },
+]);
 
 console.log('seed');
 const dryRun = runSeed();
