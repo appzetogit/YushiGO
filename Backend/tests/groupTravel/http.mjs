@@ -52,7 +52,7 @@ const runSeed = (...args) =>
 
 console.log('seed without zones');
 runSeed('--apply');
-check('global price per vehicle when there are no zones', (await mongoose.connection.collection('taxisetprices').countDocuments({ zone_id: null })) === 4);
+check('global price per vehicle when there are no zones', (await mongoose.connection.collection('taxisetprices').countDocuments({ zone_id: null })) === 7);
 for (const name of ['taxivehicles', 'taxisetprices', 'taxibusservices']) {
   await mongoose.connection.collection(name).deleteMany({});
 }
@@ -68,9 +68,9 @@ check('dry run writes nothing', (await mongoose.connection.collection('taxibusse
 runSeed('--apply');
 const secondRun = runSeed('--apply');
 check('re-run keeps existing records', !/create /.test(secondRun), secondRun);
-check('4 group vehicle types', (await mongoose.connection.collection('taxivehicles').countDocuments({ category: 'group' })) === 4);
-check('4 group trips', (await mongoose.connection.collection('taxibusservices').countDocuments({ vehicleKind: { $ne: 'bus' } })) === 4);
-check('prices in usable zones only', (await mongoose.connection.collection('taxisetprices').countDocuments()) === 8);
+check('7 group vehicle types', (await mongoose.connection.collection('taxivehicles').countDocuments({ category: 'group' })) === 7);
+check('7 group trips', (await mongoose.connection.collection('taxibusservices').countDocuments({ vehicleKind: { $ne: 'bus' } })) === 7);
+check('prices in usable zones only', (await mongoose.connection.collection('taxisetprices').countDocuments()) === 14);
 
 const server = http.createServer(createApp());
 await new Promise((resolve) => server.listen(0, resolve));
@@ -86,7 +86,7 @@ const call = async (method, url, body) => {
   return { status: response.status, body: await response.json() };
 };
 
-// Next Saturday: every seeded trip except the weekday-only Luxury Van runs (5 schedules).
+// Next Saturday: every seeded trip except the weekday-only Mumbai-Pune Luxury Van runs (9 schedules).
 const saturday = new Date();
 saturday.setDate(saturday.getDate() + ((6 - saturday.getDay() + 7) % 7 || 7));
 const date = saturday.toISOString().slice(0, 10);
@@ -95,10 +95,10 @@ console.log('GET /schedules');
 const unauthorized = await fetch(`${base}/schedules`);
 check('requires login', unauthorized.status === 401);
 const all = await call('GET', `/schedules?date=${date}`);
-check('lists group trips on the date', all.status === 200 && all.body.data.schedules.length === 5, JSON.stringify(all.body).slice(0, 200));
+check('lists group trips on the date', all.status === 200 && all.body.data.schedules.length === 9, JSON.stringify(all.body).slice(0, 200));
 const route = await call('GET', `/schedules?origin=indore&destination=ujjain&date=${date}`);
 const urbania = route.body.data.schedules[0];
-check('filters by route', route.body.data.schedules.length === 2 && urbania?.vehicleKind === 'urbania');
+check('filters by route', route.body.data.schedules.length === 3 && urbania?.vehicleKind === 'urbania');
 check('real fare and seats', urbania?.price === 299 && urbania?.totalSeats === 15 && urbania?.availableSeats === 15, JSON.stringify(urbania));
 check('boarding points included', urbania?.route?.stops?.length === 3);
 const byKind = await call('GET', `/schedules?vehicleKind=traveller,mini_bus&date=${date}`);
@@ -147,7 +147,9 @@ const search = await call('POST', '/search/vehicles', {
   passengers: 14,
 });
 const vehicles = search.body.data?.vehicles || [];
-check('returns group vehicles', search.status === 200 && vehicles.length === 4, JSON.stringify(search.body).slice(0, 200));
+check('returns group vehicles', search.status === 200 && vehicles.length === 7, JSON.stringify(search.body).slice(0, 200));
+const vans = await call('GET', `/schedules?vehicleKind=luxury_van&date=${date}`);
+check('luxury van trips run on the weekend', vans.body.data.schedules.length === 4 && vans.body.data.schedules.every((item) => item.vehicleKind === 'luxury_van'), JSON.stringify(vans.body).slice(0, 200));
 check('vehicles that fit come first', vehicles[0]?.fitsPassengers === true && vehicles[0]?.name === 'Force Urbania');
 const urbaniaFare = vehicles.find((item) => item.name === 'Force Urbania')?.fare;
 check('server-side fare from SetPrice', urbaniaFare?.total === 2500 + (51 - 10) * 32, JSON.stringify(urbaniaFare));
