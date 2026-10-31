@@ -21,6 +21,8 @@ export const deleteVehicle = async (req, res) => ok(res, await vehicleService.de
 // ── Customer: booking ───────────────────────────────────────────────────────
 export const createQuote = async (req, res) => ok(res, await bookingService.createQuote({ customerId: req.auth.sub, payload: req.body }), 201);
 export const createBooking = async (req, res) => ok(res, await bookingService.createBooking({ customerId: req.auth.sub, payload: req.body }), 201);
+export const listEventPackages = async (req, res) =>
+  ok(res, { packages: await pricingService.listEventPackages({ serviceLocationId: req.query?.serviceLocationId || null }) });
 export const checkAvailability = async (req, res) => ok(res, await bookingService.checkAvailability({ query: req.query }));
 export const confirmArrival = async (req, res) => ok(res, await bookingService.confirmArrival({ customerId: req.auth.sub, bookingId: req.params.bookingId }));
 

@@ -175,6 +175,26 @@ export const getCurrentPricing = async ({ serviceLocationId = null, serviceType 
   return pricing;
 };
 
+/**
+ * Customer: the event packages on offer for an area, so the app can list them
+ * before quoting. Empty (not an error) when event pricing is not set up there.
+ */
+export const listEventPackages = async ({ serviceLocationId = null } = {}) => {
+  try {
+    const pricing = await getCurrentPricing({ serviceLocationId, serviceType: DRIVER_HIRE_SERVICE_TYPES.EVENT });
+    return (pricing.eventPackages || []).map((pkg) => ({
+      code: pkg.code,
+      name: pkg.name,
+      minutes: pkg.minutes,
+      price: pkg.price,
+      currency: pricing.currency || 'INR',
+    }));
+  } catch (error) {
+    if (error?.code === DRIVER_HIRE_ERRORS.PRICING_NOT_CONFIGURED) return [];
+    throw error;
+  }
+};
+
 const numberIn = (value, { min = 0, max = Infinity, field }) => {
   const number = Number(value);
   if (!Number.isFinite(number) || number < min || number > max) {

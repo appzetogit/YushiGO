@@ -303,6 +303,8 @@ export const adminService = {
   getDriverHireReviews: (params = {}) => api.get('/admin/driver-hire/reviews', { params }),
   moderateDriverHireReview: (id, status) => api.post(`/admin/driver-hire/reviews/${id}/moderate`, { status }),
   getDriverHireReport: (params = {}) => api.get('/admin/driver-hire/reports', { params }),
+  getDriverHirePayments: (params = {}) => api.get('/admin/driver-hire/payments', { params }),
+  getDriverHireAudit: (params = {}) => api.get('/admin/driver-hire/audit', { params }),
 
   getPoolingVehicles: () => api.get('/admin/pooling-vehicles'),
   getPendingPoolingVehicles: (search = '') =>

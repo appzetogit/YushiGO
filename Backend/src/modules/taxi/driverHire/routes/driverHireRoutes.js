@@ -28,6 +28,7 @@ driverHireRouter.get('/drivers/availability', asUser, asyncHandler(hire.checkAva
 // Bookings. `quote` is declared before `/:bookingId` so the literal segment is
 // not captured by the parameter route.
 driverHireRouter.post('/driver-bookings/quote', asUser, asyncHandler(hire.createQuote));
+driverHireRouter.get('/driver-bookings/event-packages', asUser, asyncHandler(hire.listEventPackages));
 driverHireRouter.post('/driver-bookings', asUser, asyncHandler(hire.createBooking));
 driverHireRouter.get('/driver-bookings', asEither, asyncHandler(hire.listBookings));
 driverHireRouter.get('/driver-bookings/:bookingId', asEither, asyncHandler(hire.getBooking));

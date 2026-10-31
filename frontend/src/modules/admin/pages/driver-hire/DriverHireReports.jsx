@@ -8,6 +8,8 @@ const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'support', label: 'Support & safety' },
   { key: 'reviews', label: 'Reviews' },
+  { key: 'payments', label: 'Payments' },
+  { key: 'audit', label: 'Audit log' },
 ];
 
 const Stat = ({ label, value, hint }) => (
@@ -131,6 +133,153 @@ const SupportCases = () => {
   );
 };
 
+const PAYMENT_FILTERS = [
+  { key: '', label: 'All' },
+  { key: 'PENDING', label: 'Pending' },
+  { key: 'PAID', label: 'Paid' },
+  { key: 'FAILED', label: 'Failed' },
+];
+
+/** Every customer charge with its platform fee, driver payout and refund (spec §4 Payments). */
+const Payments = () => {
+  const [paymentStatus, setPaymentStatus] = useState('');
+  const [items, setItems] = useState(null);
+
+  useEffect(() => {
+    setItems(null);
+    adminService
+      .getDriverHirePayments(paymentStatus ? { paymentStatus } : {})
+      .then((response) => setItems(unwrap(response).payments || []))
+      .catch((error) => {
+        setItems([]);
+        toast.error(errorMessage(error, 'Failed to load payments'));
+      });
+  }, [paymentStatus]);
+
+  const totals = (items || []).reduce(
+    (sum, entry) => ({
+      amount: sum.amount + (entry.paymentStatus === 'PAID' ? entry.amount : 0),
+      platform: sum.platform + (entry.paymentStatus === 'PAID' ? entry.platformFee || 0 : 0),
+      refunded: sum.refunded + (entry.refundAmount || 0),
+    }),
+    { amount: 0, platform: 0, refunded: 0 },
+  );
+
+  return (
+    <div>
+      <Tabs tabs={PAYMENT_FILTERS} value={paymentStatus} onChange={setPaymentStatus} />
+      {items && items.length > 0 && (
+        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Stat label="Collected" value={money(totals.amount)} hint="paid, in this list" />
+          <Stat label="Platform fees" value={money(totals.platform)} />
+          <Stat label="Refunded" value={money(totals.refunded)} />
+        </div>
+      )}
+      <Card>
+        {!items ? <Loading /> : items.length === 0 ? <Empty title="No payments" /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="text-left text-xs font-bold uppercase tracking-wider text-slate-400">
+                  <th className="p-3">Date</th>
+                  <th className="p-3">Kind</th>
+                  <th className="p-3">Method</th>
+                  <th className="p-3 text-right">Amount</th>
+                  <th className="p-3 text-right">Platform</th>
+                  <th className="p-3 text-right">Driver</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Payout</th>
+                  <th className="p-3">Refund</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {items.map((entry) => (
+                  <tr key={entry._id || entry.id}>
+                    <td className="p-3 text-slate-500">{formatDateTime(entry.createdAt)}</td>
+                    <td className="p-3 font-semibold">{String(entry.kind || '').replace(/_/g, ' ').toLowerCase()}</td>
+                    <td className="p-3">{String(entry.method || '').toLowerCase()}</td>
+                    <td className="p-3 text-right font-bold">{money(entry.amount, entry.currency)}</td>
+                    <td className="p-3 text-right">{money(entry.platformFee, entry.currency)}</td>
+                    <td className="p-3 text-right">{money(entry.driverAmount, entry.currency)}</td>
+                    <td className="p-3"><Badge value={entry.paymentStatus} /></td>
+                    <td className="p-3"><Badge value={entry.payoutStatus} /></td>
+                    <td className="p-3">
+                      {entry.refundAmount > 0 ? `${money(entry.refundAmount, entry.currency)} · ${String(entry.refundStatus || '').toLowerCase()}` : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      <p className="mt-2 text-xs text-slate-400">Latest 200. Mark a payment paid or refund it from the booking in Driver Hire Bookings.</p>
+    </div>
+  );
+};
+
+const AUDIT_FILTERS = [
+  { key: '', label: 'All' },
+  { key: 'DriverHireBooking', label: 'Bookings' },
+  { key: 'DriverHirePricing', label: 'Pricing' },
+  { key: 'DriverHireProfile', label: 'Drivers' },
+  { key: 'DriverHirePayment', label: 'Payments' },
+];
+
+const summarizeChange = (value) => {
+  if (!value || typeof value !== 'object') return '';
+  return Object.entries(value)
+    .filter(([, item]) => item !== null && item !== undefined && typeof item !== 'object')
+    .slice(0, 6)
+    .map(([key, item]) => `${key}: ${item}`)
+    .join(' · ');
+};
+
+/** Admin actions, booking status changes, pricing and document decisions (spec §4 Audit). */
+const AuditLog = () => {
+  const [entityType, setEntityType] = useState('');
+  const [items, setItems] = useState(null);
+
+  useEffect(() => {
+    setItems(null);
+    adminService
+      .getDriverHireAudit(entityType ? { entityType } : {})
+      .then((response) => setItems(unwrap(response).entries || []))
+      .catch((error) => {
+        setItems([]);
+        toast.error(errorMessage(error, 'Failed to load audit log'));
+      });
+  }, [entityType]);
+
+  return (
+    <div>
+      <Tabs tabs={AUDIT_FILTERS} value={entityType} onChange={setEntityType} />
+      <Card>
+        {!items ? <Loading /> : items.length === 0 ? <Empty title="No entries" /> : (
+          <div className="divide-y divide-slate-100">
+            {items.map((entry) => (
+              <div key={entry._id || entry.id} className="flex flex-wrap items-start justify-between gap-2 p-4 text-sm">
+                <div className="max-w-3xl">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-black">{String(entry.action || '').replace(/_/g, ' ').toLowerCase()}</span>
+                    <span className="text-slate-400">{String(entry.entityType || '').replace('DriverHire', '').toLowerCase()} {String(entry.entityId || '').slice(-6)}</span>
+                  </div>
+                  {summarizeChange(entry.changeSummary) && <p className="mt-1 text-slate-500">{summarizeChange(entry.changeSummary)}</p>}
+                </div>
+                <div className="text-right text-xs text-slate-400">
+                  <div>{formatDateTime(entry.createdAt)}</div>
+                  <div>by {entry.actorRole}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      <p className="mt-2 text-xs text-slate-400">Latest 200 entries.</p>
+    </div>
+  );
+};
+
 const Reviews = () => {
   const [items, setItems] = useState(null);
   const load = async () => {
@@ -184,6 +333,8 @@ const DriverHireReports = () => {
       {tab === 'overview' && <Overview />}
       {tab === 'support' && <SupportCases />}
       {tab === 'reviews' && <Reviews />}
+      {tab === 'payments' && <Payments />}
+      {tab === 'audit' && <AuditLog />}
     </div>
   );
 };

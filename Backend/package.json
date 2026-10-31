@@ -11,7 +11,7 @@
     "test:carpool": "node tests/carpool/routeMatching.mjs && node tests/carpool/booking.mjs && node tests/carpool/rating.mjs && node tests/carpool/expiry.mjs && node tests/carpool/documents.mjs",
     "test:parcel": "node tests/parcel/handover.mjs",
     "test:ride-platform": "node tests/ridePlatform/ridePlatform.mjs",
-    "test:driver-hire": "node tests/driverHire/pricing.mjs && node tests/driverHire/booking.mjs && node tests/driverHire/http.mjs",
+    "test:driver-hire": "node tests/driverHire/pricing.mjs && node tests/driverHire/booking.mjs && node tests/driverHire/http.mjs && node tests/driverHire/seed.mjs",
     "test:api": "node tests/api/http.mjs",
     "test:group-travel": "node tests/groupTravel/http.mjs",
     "test:luxury": "node tests/luxury/http.mjs",
