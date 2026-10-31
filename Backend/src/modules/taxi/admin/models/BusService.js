@@ -1,5 +1,9 @@
 import mongoose from 'mongoose';
 
+// 'bus' is the regular bus module; the rest are Group & Large Vehicles (Urbania, Traveller, ...).
+export const BUS_VEHICLE_KINDS = ['bus', 'urbania', 'traveller', 'luxury_van', 'mini_bus'];
+export const GROUP_VEHICLE_KINDS = BUS_VEHICLE_KINDS.filter((kind) => kind !== 'bus');
+
 const busSeatCellSchema = new mongoose.Schema(
   {
     kind: {
@@ -331,6 +335,11 @@ const busServiceSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    vehicleKind: {
+      type: String,
+      enum: BUS_VEHICLE_KINDS,
+      default: 'bus',
+    },
     coachType: {
       type: String,
       default: 'AC Sleeper',
@@ -580,6 +589,7 @@ busServiceSchema.index({ operatorName: 1, busName: 1 });
 busServiceSchema.index({ serviceNumber: 1 });
 busServiceSchema.index({ 'route.originCity': 1, 'route.destinationCity': 1, status: 1 });
 busServiceSchema.index({ ownerId: 1, createdAt: -1 });
+busServiceSchema.index({ vehicleKind: 1, status: 1 });
 
 export const BusService =
   mongoose.models.TaxiBusService || mongoose.model('TaxiBusService', busServiceSchema);

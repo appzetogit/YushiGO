@@ -516,7 +516,7 @@ const razorpayRequest = async ({ method, path, body, keyId, keySecret }) => {
 const BUS_HOLD_MINUTES = 10;
 const BUS_DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const normalizeBusTravelDate = (value) => {
+export const normalizeBusTravelDate = (value) => {
   const rawValue = toCleanString(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
     return rawValue;
@@ -568,15 +568,15 @@ const normalizeBusCity = (value) => toCleanString(value).toLowerCase();
 
 const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const buildBusCityRegex = (value) => new RegExp(`^${escapeRegex(toCleanString(value))}$`, 'i');
+export const buildBusCityRegex = (value) => new RegExp(`^${escapeRegex(toCleanString(value))}$`, 'i');
 
-const flattenBusBlueprintSeats = (blueprint = {}) =>
+export const flattenBusBlueprintSeats = (blueprint = {}) =>
   ['lowerDeck', 'upperDeck']
     .flatMap((deckKey) => Array.isArray(blueprint?.[deckKey]) ? blueprint[deckKey] : [])
     .flatMap((row) => (Array.isArray(row) ? row : []))
     .filter((cell) => cell?.kind === 'seat' && cell?.id);
 
-const resolveBusSeatPrice = (busService = {}, seat = {}) => {
+export const resolveBusSeatPrice = (busService = {}, seat = {}) => {
   const variantPricing = busService?.variantPricing || {};
   const defaultPrice = Number(busService?.seatPrice || 0);
   const variantKey = String(seat?.variant || 'seat').trim().toLowerCase();
@@ -590,7 +590,7 @@ const findBusSchedule = (busService, scheduleId) =>
     (item) => String(item?.id || '') === String(scheduleId || ''),
   );
 
-const isScheduleAvailableOnDate = (schedule, travelDate) => {
+export const isScheduleAvailableOnDate = (schedule, travelDate) => {
   if (!schedule || String(schedule.status || 'active') !== 'active') {
     return false;
   }
@@ -794,7 +794,7 @@ const buildBusPartialCancellationQuote = ({
   });
 };
 
-const ensureBusServiceEnabled = async () => {
+export const ensureBusServiceEnabled = async () => {
   const transportSettings = await getTransportRideSettings();
   if (String(transportSettings.enable_bus_service || '0') !== '1') {
     throw new ApiError(403, 'Bus service is currently disabled');
@@ -805,7 +805,7 @@ let lastBusSeatHoldCleanupAt = 0;
 const BUS_HOLD_CLEANUP_COOLDOWN_MS = 30_000;
 let busSeatHoldCleanupPromise = null;
 
-const cleanupExpiredBusSeatHolds = async () => {
+export const cleanupExpiredBusSeatHolds = async () => {
   const nowMs = Date.now();
   if (nowMs - lastBusSeatHoldCleanupAt < BUS_HOLD_CLEANUP_COOLDOWN_MS) {
     return;
@@ -855,10 +855,12 @@ const cleanupExpiredBusSeatHolds = async () => {
 const createBusBookingCode = () =>
   `BUS${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
-const serializeBusSearchResult = ({ busService, schedule, availableSeats, travelDate }) => ({
+export const serializeBusSearchResult = ({ busService, schedule, availableSeats, travelDate }) => ({
   id: `${String(busService._id)}:${String(schedule.id)}:${travelDate}`,
   busServiceId: String(busService._id),
   scheduleId: String(schedule.id || ''),
+  vehicleKind: busService.vehicleKind || 'bus',
+  activeDays: Array.isArray(schedule.activeDays) ? schedule.activeDays : [],
   operator: busService.operatorName || '',
   operatorName: busService.operatorName || '',
   busName: busService.busName || '',

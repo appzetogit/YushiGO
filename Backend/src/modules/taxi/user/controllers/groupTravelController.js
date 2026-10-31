@@ -1,9 +1,18 @@
-import { BusService } from '../../admin/models/BusService.js';
+import mongoose from 'mongoose';
+import { BusService, BUS_VEHICLE_KINDS } from '../../admin/models/BusService.js';
 import { BusSeatHold } from '../models/BusSeatHold.js';
-import { BusBooking } from '../models/BusBooking.js';
-import { PoolingRoute } from '../../admin/models/PoolingRoute.js';
 import { Vehicle } from '../../admin/models/Vehicle.js';
 import { SetPrice } from '../../admin/models/SetPrice.js';
+import { ApiError } from '../../../../utils/ApiError.js';
+import {
+  buildBusCityRegex,
+  cleanupExpiredBusSeatHolds,
+  ensureBusServiceEnabled,
+  flattenBusBlueprintSeats,
+  isScheduleAvailableOnDate,
+  normalizeBusTravelDate,
+  serializeBusSearchResult,
+} from './userController.js';
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -18,401 +27,263 @@ const haversineKm = (lat1, lon1, lat2, lon2) => {
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-const normalizeDateString = (val) => {
-  if (!val) {
-    const now = new Date();
-    return now.toISOString().split('T')[0];
-  }
-  const str = String(val).trim();
-  if (str.includes('T')) return str.split('T')[0];
-  return str;
+const toCleanString = (value) => String(value ?? '').trim();
+
+const readCoords = (point = {}) => {
+  const lat = Number(point?.latitude ?? point?.lat);
+  const lng = Number(point?.longitude ?? point?.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0) ? { lat, lng } : null;
 };
 
+const parseVehicleKinds = (value) =>
+  toCleanString(value)
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => BUS_VEHICLE_KINDS.includes(item));
+
+// Matches a city on the route ends or on any boarding/drop stop.
+const cityMatch = (city, endField) => {
+  const regex = buildBusCityRegex(city);
+  return { $or: [{ [`route.${endField}`]: regex }, { 'route.stops.city': regex }] };
+};
+
+const countReservedSeats = async (busIds, travelDate) => {
+  if (busIds.length === 0) return new Map();
+  const holds = await BusSeatHold.find({
+    busServiceId: { $in: busIds },
+    travelDate,
+    status: { $in: ['held', 'booked'] },
+  })
+    .select('busServiceId scheduleId')
+    .lean();
+
+  const counts = new Map();
+  holds.forEach((hold) => {
+    const key = `${String(hold.busServiceId)}:${String(hold.scheduleId)}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return counts;
+};
+
+const countBookableSeats = (busService) =>
+  flattenBusBlueprintSeats(busService.blueprint).filter(
+    (seat) => String(seat.status || 'available') !== 'blocked',
+  ).length;
+
 /**
- * GET /api/v1/schedules
- * Query: origin, destination, date
+ * GET /schedules?origin=&destination=&date=&vehicleKind=urbania,traveller
+ * Published seat-based trips (Group & Large Vehicles and buses) running on the date.
+ * origin/destination are optional so the timetable can be browsed without a route.
  */
 export const getSchedules = async (req, res) => {
-  const originQuery = String(req.query?.origin || req.query?.fromCity || req.query?.from || '').trim();
-  const destQuery = String(req.query?.destination || req.query?.toCity || req.query?.to || '').trim();
-  const travelDate = normalizeDateString(req.query?.date || req.query?.travelDate);
+  await ensureBusServiceEnabled();
+  await cleanupExpiredBusSeatHolds();
 
-  const busFilter = {
-    $or: [{ status: 'active' }, { active: true }],
-  };
+  const origin = toCleanString(req.query?.origin || req.query?.fromCity || req.query?.from);
+  const destination = toCleanString(req.query?.destination || req.query?.toCity || req.query?.to);
+  const travelDate = normalizeBusTravelDate(req.query?.date || req.query?.travelDate);
+  const vehicleKinds = parseVehicleKinds(req.query?.vehicleKind || req.query?.vehicleKinds);
 
-  if (originQuery) {
-    const originRegex = new RegExp(originQuery, 'i');
-    busFilter.$and = busFilter.$and || [];
-    busFilter.$and.push({
-      $or: [
-        { 'route.originCity': originRegex },
-        { 'route.originLabel': originRegex },
-        { 'stops.city': originRegex },
-        { 'stops.pointName': originRegex },
-      ],
-    });
-  }
+  const conditions = [{ status: 'active' }];
+  if (vehicleKinds.length > 0) conditions.push({ vehicleKind: { $in: vehicleKinds } });
+  if (origin) conditions.push(cityMatch(origin, 'originCity'));
+  if (destination) conditions.push(cityMatch(destination, 'destinationCity'));
 
-  if (destQuery) {
-    const destRegex = new RegExp(destQuery, 'i');
-    busFilter.$and = busFilter.$and || [];
-    busFilter.$and.push({
-      $or: [
-        { 'route.destinationCity': destRegex },
-        { 'route.destinationLabel': destRegex },
-        { 'stops.city': destRegex },
-        { 'stops.pointName': destRegex },
-      ],
-    });
-  }
+  const busServices = await BusService.find({ $and: conditions }).lean();
+  const reserved = await countReservedSeats(busServices.map((item) => item._id), travelDate);
 
-  const busServices = await BusService.find(busFilter).lean();
+  const schedules = busServices
+    .flatMap((busService) => {
+      const totalSeats = countBookableSeats(busService);
+      return (Array.isArray(busService.schedules) ? busService.schedules : [])
+        .filter((schedule) => isScheduleAvailableOnDate(schedule, travelDate))
+        .map((schedule) => {
+          const reservedSeats = reserved.get(`${String(busService._id)}:${String(schedule.id)}`) || 0;
+          return {
+            ...serializeBusSearchResult({
+              busService,
+              schedule,
+              travelDate,
+              availableSeats: totalSeats - reservedSeats,
+            }),
+            totalSeats,
+            scheduleLabel: schedule.label || '',
+          };
+        });
+    })
+    .sort((a, b) => String(a.departure).localeCompare(String(b.departure)));
 
-  // Also query PoolingRoutes
-  const poolFilter = {
-    $or: [{ status: 'active' }, { active: true }],
-  };
-  if (originQuery) {
-    const originRegex = new RegExp(originQuery, 'i');
-    poolFilter.$and = poolFilter.$and || [];
-    poolFilter.$and.push({
-      $or: [
-        { originLabel: originRegex },
-        { routeName: originRegex },
-        { 'pickupPoints.name': originRegex },
-        { 'pickupPoints.address': originRegex },
-      ],
-    });
-  }
-  if (destQuery) {
-    const destRegex = new RegExp(destQuery, 'i');
-    poolFilter.$and = poolFilter.$and || [];
-    poolFilter.$and.push({
-      $or: [
-        { destinationLabel: destRegex },
-        { routeName: destRegex },
-        { 'dropPoints.name': destRegex },
-        { 'dropPoints.address': destRegex },
-      ],
-    });
-  }
-  const poolingRoutes = await PoolingRoute.find(poolFilter).lean();
-
-  const formattedSchedules = [];
-
-  for (const bus of busServices) {
-    const schedulesList = Array.isArray(bus.schedules) && bus.schedules.length > 0
-      ? bus.schedules.filter((s) => s.status !== 'paused' && s.status !== 'draft')
-      : [{
-          id: String(bus._id),
-          label: bus.name,
-          departureTime: '08:00',
-          arrivalTime: '09:30',
-          activeDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-        }];
-
-    for (const sch of schedulesList) {
-      formattedSchedules.push({
-        id: sch.id || String(bus._id),
-        scheduleId: sch.id || String(bus._id),
-        busServiceId: String(bus._id),
-        serviceId: String(bus._id),
-        name: bus.name || bus.operatorName || 'Group Route',
-        busName: bus.name || bus.operatorName || 'Group Route',
-        operatorName: bus.operatorName || 'YushiGo Group Travel',
-        busNumber: bus.busNumber || 'MP-09-UR-2026',
-        busType: bus.busType || 'Force Urbania AC',
-        vehicleType: bus.busType || 'Force Urbania AC',
-        fromCity: bus.route?.originCity || bus.stops?.[0]?.city || 'Indore',
-        toCity: bus.route?.destinationCity || bus.stops?.[bus.stops.length - 1]?.city || 'Ujjain',
-        origin: bus.route?.originLabel || bus.route?.originCity || 'Indore',
-        destination: bus.route?.destinationLabel || bus.route?.destinationCity || 'Ujjain',
-        departureTime: sch.departureTime || '08:00',
-        arrivalTime: sch.arrivalTime || '09:15',
-        departure: sch.departureTime || '08:00',
-        arrival: sch.arrivalTime || '09:15',
-        fare: bus.baseFare || 250,
-        price: bus.baseFare || 250,
-        farePerSeat: bus.baseFare || 250,
-        totalSeats: bus.totalSeats || 15,
-        availableSeats: Math.max(1, (bus.totalSeats || 15) - 2),
-        rating: bus.rating || 4.8,
-        activeDays: sch.activeDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-        stops: bus.stops || [],
-        image: bus.image || bus.coverImage || '',
-        coverImage: bus.coverImage || bus.image || '',
-        galleryImages: bus.galleryImages || [],
-        amenities: bus.amenities || [],
-        coachType: bus.coachType || bus.busType || '',
-        busCategory: bus.busCategory || '',
-        travelDate,
-      });
-    }
-  }
-
-  for (const pool of poolingRoutes) {
-    const schedulesList = Array.isArray(pool.schedules) && pool.schedules.length > 0
-      ? pool.schedules
-      : [{
-          id: String(pool._id),
-          label: pool.routeName,
-          departureTime: '07:00',
-          arrivalTime: '10:00',
-          activeDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-        }];
-
-    for (const sch of schedulesList) {
-      formattedSchedules.push({
-        id: sch.id || String(pool._id),
-        scheduleId: sch.id || String(pool._id),
-        poolingRouteId: String(pool._id),
-        serviceId: String(pool._id),
-        name: pool.routeName || 'Shared Route',
-        busName: pool.routeName || 'Shared Route',
-        operatorName: 'YushiGo Shared Travel',
-        busNumber: pool.routeCode || '',
-        busType: 'Shared Shuttle',
-        vehicleType: 'Shared Shuttle',
-        fromCity: pool.originLabel || 'Indore',
-        toCity: pool.destinationLabel || 'Ujjain',
-        origin: pool.originLabel || 'Indore',
-        destination: pool.destinationLabel || 'Ujjain',
-        departureTime: sch.departureTime || '07:00',
-        arrivalTime: sch.arrivalTime || '10:00',
-        departure: sch.departureTime || '07:00',
-        arrival: sch.arrivalTime || '10:00',
-        fare: pool.farePerSeat || 300,
-        price: pool.farePerSeat || 300,
-        farePerSeat: pool.farePerSeat || 300,
-        totalSeats: 15,
-        availableSeats: 8,
-        rating: 4.8,
-        activeDays: sch.activeDays || [],
-        stops: pool.stops || [],
-        travelDate,
-      });
-    }
-  }
-
-  return res.json({
+  res.json({
     success: true,
     data: {
       travelDate,
-      schedules: formattedSchedules,
-      results: formattedSchedules,
+      schedules,
+      results: schedules,
     },
-    schedules: formattedSchedules,
-    results: formattedSchedules,
   });
 };
 
 /**
- * GET /api/v1/schedules/:id/availability
+ * GET /schedules/:id/availability?scheduleId=&date=
+ * :id is the bus service id, or the composite "<busServiceId>:<scheduleId>:<date>" search id.
  */
 export const getScheduleAvailability = async (req, res) => {
-  const targetId = String(req.params?.id || '').trim();
-  const travelDate = normalizeDateString(req.query?.date || req.query?.travelDate);
+  await ensureBusServiceEnabled();
+  await cleanupExpiredBusSeatHolds();
 
-  let bus = await BusService.findOne({
-    $or: [{ _id: targetId.length === 24 ? targetId : null }, { 'schedules.id': targetId }],
-  }).lean();
+  const [rawId, idScheduleId, idDate] = toCleanString(req.params?.id).split(':');
+  const scheduleId = toCleanString(req.query?.scheduleId) || toCleanString(idScheduleId);
+  const travelDate = normalizeBusTravelDate(req.query?.date || req.query?.travelDate || idDate);
 
-  if (!bus) {
-    bus = await BusService.findOne({ status: 'active' }).lean();
+  if (!mongoose.Types.ObjectId.isValid(rawId)) {
+    throw new ApiError(400, 'A valid bus service id is required');
+  }
+  if (!scheduleId) {
+    throw new ApiError(400, 'scheduleId is required');
   }
 
-  if (bus) {
-    const holds = await BusSeatHold.find({
-      busServiceId: bus._id,
-      travelDate,
-      status: { $in: ['held', 'booked'] },
-    })
-      .select('seatId')
-      .lean();
+  const busService = await BusService.findById(rawId).lean();
+  if (!busService || busService.status !== 'active') {
+    throw new ApiError(404, 'Service not found');
+  }
 
-    const heldSeatIds = new Set(holds.map((h) => String(h.seatId)));
+  const schedule = (busService.schedules || []).find((item) => String(item.id) === scheduleId);
+  if (!isScheduleAvailableOnDate(schedule, travelDate)) {
+    throw new ApiError(404, 'This trip does not run on the selected date');
+  }
 
-    const lowerDeckRows = (bus.lowerDeckSeats || []).map((row) =>
+  const holds = await BusSeatHold.find({
+    busServiceId: busService._id,
+    scheduleId,
+    travelDate,
+    status: { $in: ['held', 'booked'] },
+  })
+    .select('seatId')
+    .lean();
+  const reservedSeatIds = new Set(holds.map((hold) => String(hold.seatId)));
+
+  const mapDeck = (deckRows = []) =>
+    deckRows.map((row) =>
       (Array.isArray(row) ? row : []).map((cell) => {
-        const isSeat = cell.kind === 'seat';
-        const isBooked = !isSeat || cell.status === 'blocked' || heldSeatIds.has(String(cell.id || cell.label));
-        return {
-          seatNumber: cell.id || cell.label || '',
-          label: cell.label || cell.id || '',
-          seatType: cell.variant || 'seat',
-          kind: cell.kind || 'seat',
-          isBooked,
-          status: isBooked ? 'booked' : 'available',
-          fareMultiplier: 1.0,
-        };
+        if (!cell || cell.kind !== 'seat') return cell;
+        const booked = String(cell.status || 'available') === 'blocked' || reservedSeatIds.has(String(cell.id));
+        return { ...cell, status: booked ? 'booked' : 'available' };
       }),
     );
 
-    const upperDeckRows = (bus.upperDeckSeats || []).map((row) =>
-      (Array.isArray(row) ? row : []).map((cell) => {
-        const isSeat = cell.kind === 'seat';
-        const isBooked = !isSeat || cell.status === 'blocked' || heldSeatIds.has(String(cell.id || cell.label));
-        return {
-          seatNumber: cell.id || cell.label || '',
-          label: cell.label || cell.id || '',
-          seatType: cell.variant || 'seat',
-          kind: cell.kind || 'seat',
-          isBooked,
-          status: isBooked ? 'booked' : 'available',
-          fareMultiplier: 1.0,
-        };
-      }),
-    );
+  const decks = {
+    lowerDeck: mapDeck(busService.blueprint?.lowerDeck || []),
+    upperDeck: mapDeck(busService.blueprint?.upperDeck || []),
+  };
+  const seats = flattenBusBlueprintSeats(decks).map((cell) => ({
+    seatId: String(cell.id),
+    label: cell.label || String(cell.id),
+    variant: cell.variant || 'seat',
+    status: cell.status,
+  }));
+  const bookedSeats = seats.filter((seat) => seat.status === 'booked').length;
 
-    const allSeats = [...lowerDeckRows.flat(), ...upperDeckRows.flat()].filter(
-      (c) => c.kind === 'seat' && c.seatNumber,
-    );
-    const totalSeats = allSeats.length || bus.totalSeats || 15;
-    const bookedSeats = allSeats.filter((s) => s.isBooked).length;
-    const availableSeats = Math.max(0, totalSeats - bookedSeats);
-
-    return res.json({
-      success: true,
-      data: {
-        id: targetId,
-        busServiceId: String(bus._id),
-        serviceName: bus.name,
-        travelDate,
-        totalSeats,
-        bookedSeats,
-        availableSeats,
-        seats: allSeats,
-        seatMap: allSeats,
-        decks: {
-          lowerDeck: lowerDeckRows,
-          upperDeck: upperDeckRows,
-        },
-      },
-      totalSeats,
-      bookedSeats,
-      availableSeats,
-      seats: allSeats,
-    });
-  }
-
-  // Fallback default availability if no bus found
-  const fallbackSeats = [];
-  for (let i = 1; i <= 15; i++) {
-    const seatNumber = `${Math.ceil(i / 3)}${String.fromCharCode(65 + ((i - 1) % 3))}`;
-    fallbackSeats.push({
-      seatNumber,
-      label: seatNumber,
-      seatType: 'seater',
-      isBooked: i === 3 || i === 7,
-      fareMultiplier: 1.0,
-    });
-  }
-
-  return res.json({
+  res.json({
     success: true,
     data: {
-      id: targetId,
-      totalSeats: 15,
-      bookedSeats: 2,
-      availableSeats: 13,
-      seats: fallbackSeats,
-      seatMap: fallbackSeats,
+      busServiceId: String(busService._id),
+      scheduleId,
+      travelDate,
+      totalSeats: seats.length,
+      bookedSeats,
+      availableSeats: seats.length - bookedSeats,
+      seats,
+      decks,
     },
-    totalSeats: 15,
-    bookedSeats: 2,
-    availableSeats: 13,
-    seats: fallbackSeats,
   });
 };
 
 /**
- * POST /api/v1/search/vehicles
- * Body: { origin, destination, passengers, date, bookingType }
+ * POST /search/vehicles
+ * Body: { origin: {lat,lng}, destination: {lat,lng}, passengers, distanceKm? }
+ * Whole-vehicle group options with a server-side fare estimate from the vehicle's SetPrice.
  */
 export const searchVehicles = async (req, res) => {
-  const { origin, destination, passengers = 1, date, bookingType } = req.body || {};
+  const { origin, destination } = req.body || {};
+  const passengers = Math.max(1, Math.floor(Number(req.body?.passengers) || 1));
 
-  const passengerCount = Math.max(1, Number(passengers) || 1);
-
-  // Find group vehicles (Force Urbania, Tempo Traveller, etc.)
-  const vehicles = await Vehicle.find({
-    status: 1,
-    $or: [
-      { category: 'group' },
-      { icon_types: 'van' },
-      { name: /urbania|traveller|van|bus/i },
-    ],
-  }).lean();
-
-  let estimatedDistanceKm = 30; // standard default distance for group vehicle trip
-  if (origin?.latitude && destination?.latitude) {
-    estimatedDistanceKm = Math.round(
-      haversineKm(origin.latitude, origin.longitude, destination.latitude, destination.longitude),
-    );
-  } else if (origin?.lat && destination?.lat) {
-    estimatedDistanceKm = Math.round(
-      haversineKm(origin.lat, origin.lng, destination.lat, destination.lng),
-    );
+  const from = readCoords(origin);
+  const to = readCoords(destination);
+  const providedDistance = Number(req.body?.distanceKm);
+  let distanceKm = null;
+  if (from && to) {
+    distanceKm = Math.max(1, Math.round(haversineKm(from.lat, from.lng, to.lat, to.lng)));
+  } else if (Number.isFinite(providedDistance) && providedDistance > 0) {
+    distanceKm = Math.round(providedDistance);
   }
-  if (estimatedDistanceKm < 5) estimatedDistanceKm = 10;
-
-  const results = [];
-
-  for (const v of vehicles) {
-    const setPrice = await SetPrice.findOne({
-      $or: [{ vehicle_type: v._id }, { vehicle_type_id: v._id }],
-      status: 'active',
-    }).lean();
-
-    const basePrice = Number(setPrice?.base_price ?? 350);
-    const baseDistance = Number(setPrice?.base_distance ?? 5);
-    const perKmPrice = Number(setPrice?.price_per_distance ?? 22);
-    const extraKm = Math.max(0, estimatedDistanceKm - baseDistance);
-    const estimatedFare = Math.round(basePrice + extraKm * perKmPrice);
-
-    results.push({
-      id: String(v._id),
-      _id: String(v._id),
-      name: v.name,
-      short_description: v.short_description || '',
-      description: v.description || '',
-      category: v.category || 'group',
-      capacity: v.capacity || 15,
-      luggage_capacity: v.luggage_capacity || 10,
-      image: v.image || '',
-      map_icon: v.map_icon || '',
-      is_luxury: Boolean(v.is_luxury),
-      basePrice,
-      baseDistance,
-      perKmPrice,
-      estimatedDistanceKm,
-      estimatedFare,
-      pricing: {
-        base_price: basePrice,
-        base_distance: baseDistance,
-        price_per_distance: perKmPrice,
-        estimated_distance_km: estimatedDistanceKm,
-        estimated_fare: estimatedFare,
-      },
-      available: (v.capacity || 15) >= passengerCount,
-    });
+  if (distanceKm === null) {
+    throw new ApiError(400, 'origin and destination coordinates (or distanceKm) are required');
   }
 
-  // Sort by suitable capacity
-  results.sort((a, b) => (a.capacity || 0) - (b.capacity || 0));
+  const vehicles = await Vehicle.find({ category: 'group', status: 1, active: { $ne: false } }).lean();
+  const prices = await SetPrice.find({
+    vehicle_type: { $in: vehicles.map((item) => item._id) },
+    status: 'active',
+    active: 1,
+  })
+    .sort({ updatedAt: -1 })
+    .lean();
+  const priceByVehicle = new Map();
+  prices.forEach((price) => {
+    const key = String(price.vehicle_type);
+    if (!priceByVehicle.has(key)) priceByVehicle.set(key, price);
+  });
 
-  return res.json({
+  const results = vehicles
+    .map((vehicle) => {
+      const price = priceByVehicle.get(String(vehicle._id));
+      const capacity = Number(vehicle.capacity || 0);
+      let fare = null;
+      if (price) {
+        const basePrice = Number(price.base_price || 0);
+        const baseDistance = Number(price.base_distance || 0);
+        const perKm = Number(price.price_per_distance || 0);
+        const baseFare = Math.round(basePrice + Math.max(0, distanceKm - baseDistance) * perKm);
+        const taxPercent = Math.max(0, Number(vehicle.service_tax || 0));
+        const tax = Math.round((baseFare * taxPercent) / 100);
+        fare = {
+          basePrice,
+          baseDistanceKm: baseDistance,
+          perKm,
+          distanceKm,
+          baseFare,
+          taxPercent,
+          tax,
+          total: baseFare + tax,
+          waitingChargePerMin: Number(price.waiting_charge || 0),
+          freeWaitingMinutes: Number(price.free_waiting_before || 0),
+          cancellationFee: Number(price.user_cancellation_fee || 0),
+        };
+      }
+
+      return {
+        id: String(vehicle._id),
+        name: vehicle.name,
+        shortDescription: vehicle.short_description || '',
+        description: vehicle.description || '',
+        image: vehicle.image || '',
+        capacity,
+        luggageCapacity: Number(vehicle.luggage_capacity || 0),
+        fitsPassengers: capacity >= passengers,
+        priced: Boolean(fare),
+        estimatedFare: fare?.total ?? null,
+        fare,
+      };
+    })
+    .sort((a, b) => Number(b.fitsPassengers) - Number(a.fitsPassengers) || a.capacity - b.capacity);
+
+  res.json({
     success: true,
     data: {
-      origin,
-      destination,
-      passengers: passengerCount,
-      estimatedDistanceKm,
+      passengers,
+      distanceKm,
       vehicles: results,
       results,
     },
-    vehicles: results,
-    results,
   });
 };

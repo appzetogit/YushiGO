@@ -28,6 +28,7 @@ import { adminService } from '../../services/adminService';
 import { computeDrivingRoute } from '../../../../shared/utils/googleRoutes';
 import {
   BUS_BLUEPRINT_TEMPLATES,
+  BUS_VEHICLE_KIND_OPTIONS,
   createBusBlueprint,
   countTotalSeats,
   createBlueprintFromTemplate,
@@ -1712,6 +1713,10 @@ const BusServiceManager = ({
                 <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Coach Summary</p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
                   <div className="rounded-2xl bg-white/10 px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Vehicle Kind</p>
+                    <p className="mt-1 text-sm font-black">{BUS_VEHICLE_KIND_OPTIONS.find((option) => option.value === (detailBus.vehicleKind || 'bus'))?.label || 'Bus'}</p>
+                  </div>
+                  <div className="rounded-2xl bg-white/10 px-4 py-3">
                     <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Coach Type</p>
                     <p className="mt-1 text-sm font-black">{detailBus.coachType || 'N/A'}</p>
                   </div>
@@ -2156,6 +2161,16 @@ const BusServiceManager = ({
               <div>
                 <label className={labelClassName}>Registration Number</label>
                 <input className={fieldClassName} value={draft.registrationNumber} onChange={(event) => updateDraft('registrationNumber', event.target.value.toUpperCase())} placeholder="Enter Registration Number" />
+              </div>
+              <div>
+                <label className={labelClassName}>Vehicle Kind</label>
+                <select className={fieldClassName} value={draft.vehicleKind || 'bus'} onChange={(event) => updateDraft('vehicleKind', event.target.value)}>
+                  {BUS_VEHICLE_KIND_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className={labelClassName}>Coach Type</label>

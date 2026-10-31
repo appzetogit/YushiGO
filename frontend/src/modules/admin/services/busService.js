@@ -8,6 +8,15 @@ const createId = (prefix = 'item') => {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
+// 'bus' is the regular bus module; the others list the trip under Group & Large Vehicles in the app.
+export const BUS_VEHICLE_KIND_OPTIONS = [
+  { value: 'bus', label: 'Bus' },
+  { value: 'urbania', label: 'Force Urbania' },
+  { value: 'traveller', label: 'Tempo Traveller' },
+  { value: 'luxury_van', label: 'Luxury Van' },
+  { value: 'mini_bus', label: 'Mini Bus' },
+];
+
 const DEFAULT_AMENITIES = ['Charging Port', 'WiFi', 'Blanket', 'Water Bottle', 'Live Tracking'];
 const normalizeLatLng = (value) => {
   const lat = Number(value?.lat);
@@ -262,6 +271,7 @@ export const createBusDraft = () => ({
   serviceNumber: '',
   driverName: '',
   driverPhone: '',
+  vehicleKind: 'bus',
   coachType: 'AC Sleeper',
   busCategory: 'Sleeper',
   registrationNumber: '',

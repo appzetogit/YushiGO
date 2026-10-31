@@ -14,7 +14,7 @@ import { createDefaultBusinessSettings } from '../data/defaultBusinessSettings.j
 import { createDefaultAppSettings } from '../data/defaultAppSettings.js';
 import { Airport } from '../models/Airport.js';
 import { Employee } from '../models/Employee.js';
-import { BusService } from '../models/BusService.js';
+import { BusService, BUS_VEHICLE_KINDS } from '../models/BusService.js';
 import { DriverNeededDocument } from '../models/DriverNeededDocument.js';
 import { GoodsType } from '../models/GoodsType.js';
 import { OwnerNeededDocument } from '../models/OwnerNeededDocument.js';
@@ -794,6 +794,9 @@ const normalizeBusServicePayload = (payload = {}, existing = {}) => {
       toObjectId(payload.ownerDriverId) ||
       toObjectId(existing.ownerDriverId) ||
       null,
+    vehicleKind: BUS_VEHICLE_KINDS.includes(payload.vehicleKind)
+      ? payload.vehicleKind
+      : existing.vehicleKind || 'bus',
     coachType: sanitizeBusText(payload.coachType, existing.coachType || 'AC Sleeper'),
     busCategory: sanitizeBusText(payload.busCategory, existing.busCategory || 'Sleeper'),
     registrationNumber: sanitizeBusText(payload.registrationNumber, existing.registrationNumber || ''),
@@ -853,6 +856,7 @@ const serializeBusService = (item = {}) => ({
   driverName: item.driverName || '',
   driverPhone: item.driverPhone || '',
   busDriverId: item.busDriverId ? String(item.busDriverId) : '',
+  vehicleKind: item.vehicleKind || 'bus',
   coachType: item.coachType || 'AC Sleeper',
   busCategory: item.busCategory || 'Sleeper',
   registrationNumber: item.registrationNumber || '',
