@@ -38,7 +38,11 @@ await mongoose.connect(process.env.MONGODB_URI, { autoIndex: false });
 
 const userId = new mongoose.Types.ObjectId();
 await mongoose.connection.collection('taxiusers').insertOne({ _id: userId, name: 'Asha', phone: '9000000011', active: true });
-await mongoose.connection.collection('taxizones').insertOne({ name: 'Indore', active: true, status: 'active' });
+await mongoose.connection.collection('taxizones').insertMany([
+  { name: 'Indore', active: true, status: 'active' },
+  { name: 'Legacy zone', active: true }, // no status field, as older zones are stored
+  { name: 'Closed zone', active: true, status: 'inactive' },
+]);
 await mongoose.connection.collection('taxiadminbusinesssettings').insertOne({
   scope: 'default',
   transport_ride: { enable_bus_service: '1' },
@@ -59,7 +63,7 @@ const secondRun = runSeed('--apply');
 check('re-run keeps existing records', !/create /.test(secondRun), secondRun);
 check('4 group vehicle types', (await mongoose.connection.collection('taxivehicles').countDocuments({ category: 'group' })) === 4);
 check('4 group trips', (await mongoose.connection.collection('taxibusservices').countDocuments({ vehicleKind: { $ne: 'bus' } })) === 4);
-check('prices in the zone', (await mongoose.connection.collection('taxisetprices').countDocuments()) === 4);
+check('prices in usable zones only', (await mongoose.connection.collection('taxisetprices').countDocuments()) === 8);
 
 const server = http.createServer(createApp());
 await new Promise((resolve) => server.listen(0, resolve));

@@ -215,7 +215,10 @@ const seedVehicleTypes = async () => {
   for (const spec of VEHICLE_TYPES) {
     const existing = await Vehicle.findOne({ name: new RegExp(`^${spec.name}$`, 'i') }).lean();
     if (existing) {
-      log(`vehicle type "${spec.name}" exists, kept as is`);
+      log(`vehicle type "${spec.name}" exists (category "${existing.category || ''}"), kept as is`);
+      if (existing.category !== 'group') {
+        log(`  note: set its category to "Group (Urbania / Traveller)" in Admin > Vehicle Types to list it under Group & Large Vehicles`);
+      }
       vehicles.push({ spec, vehicle: existing });
       continue;
     }
@@ -241,7 +244,8 @@ const seedVehicleTypes = async () => {
 };
 
 const seedPrices = async (vehicles) => {
-  const zones = await Zone.find({ active: { $ne: false }, status: 'active' }).select('_id name').lean();
+  // Same rule as dispatch (matchingService): a zone is usable unless explicitly switched off.
+  const zones = await Zone.find({ active: { $ne: false }, status: { $ne: 'inactive' } }).select('_id name').lean();
   if (zones.length === 0) {
     log('no active zones found; skipping prices (create a zone, then re-run)');
     return;
