@@ -85,7 +85,11 @@ export const getSchedules = async (req, res) => {
   const vehicleKinds = parseVehicleKinds(req.query?.vehicleKind || req.query?.vehicleKinds);
 
   const conditions = [{ status: 'active' }];
-  if (vehicleKinds.length > 0) conditions.push({ vehicleKind: { $in: vehicleKinds } });
+  if (vehicleKinds.length > 0) {
+    // Services created before vehicleKind existed have no value and are regular buses.
+    const kinds = vehicleKinds.includes('bus') ? [...vehicleKinds, null] : vehicleKinds;
+    conditions.push({ vehicleKind: { $in: kinds } });
+  }
   if (origin) conditions.push(cityMatch(origin, 'originCity'));
   if (destination) conditions.push(cityMatch(destination, 'destinationCity'));
 

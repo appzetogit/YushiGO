@@ -106,6 +106,18 @@ check('filters by vehicle kind', byKind.body.data.schedules.every((item) => ['tr
 const stopMatch = await call('GET', `/schedules?origin=dewas&date=${date}`);
 check('matches a boarding-point city', stopMatch.body.data.schedules.length === 2);
 
+const legacyBus = (await mongoose.connection.collection('taxibusservices').findOne({ serviceNumber: 'YG-MB-DEL-AGR' }));
+await mongoose.connection.collection('taxibusservices').insertOne({
+  ...legacyBus,
+  _id: new mongoose.Types.ObjectId(),
+  serviceNumber: 'LEGACY-BUS',
+  vehicleKind: undefined,
+});
+await mongoose.connection.collection('taxibusservices').updateOne({ serviceNumber: 'LEGACY-BUS' }, { $unset: { vehicleKind: '' } });
+const buses = await call('GET', `/schedules?vehicleKind=bus&date=${date}`);
+check('older services without a kind count as buses', buses.body.data.schedules.length === 1 && buses.body.data.schedules[0].vehicleKind === 'bus', JSON.stringify(buses.body).slice(0, 200));
+await mongoose.connection.collection('taxibusservices').deleteOne({ serviceNumber: 'LEGACY-BUS' });
+
 console.log('GET /schedules/:id/availability');
 const availability = await call('GET', `/schedules/${urbania.id}/availability`);
 check('seat map for the trip', availability.status === 200 && availability.body.data.totalSeats === 15 && availability.body.data.seats[0]?.seatId === 'S1A', JSON.stringify(availability.body).slice(0, 200));
