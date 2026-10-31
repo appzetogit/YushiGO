@@ -14,7 +14,8 @@
     "test:driver-hire": "node tests/driverHire/pricing.mjs && node tests/driverHire/booking.mjs && node tests/driverHire/http.mjs",
     "test:api": "node tests/api/http.mjs",
     "test:group-travel": "node tests/groupTravel/http.mjs",
-    "test": "npm run test:student-ride && npm run test:carpool && npm run test:parcel && npm run test:driver-hire && npm run test:ride-platform && npm run test:api && npm run test:group-travel"
+    "test:luxury": "node tests/luxury/http.mjs",
+    "test": "npm run test:student-ride && npm run test:carpool && npm run test:parcel && npm run test:driver-hire && npm run test:ride-platform && npm run test:api && npm run test:group-travel && npm run test:luxury"
   },
   "dependencies": {
     "@phonepe-pg/pg-sdk-node": "^2.0.6",

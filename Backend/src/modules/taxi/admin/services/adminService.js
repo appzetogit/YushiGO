@@ -58,7 +58,7 @@ import {
   serializeDriverWallet,
 } from '../../driver/services/walletService.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS, VEHICLE_TYPES } from '../../constants/index.js';
-import { VEHICLE_TYPE_CATEGORIES } from '../models/Vehicle.js';
+import { LUXURY_TIERS, VEHICLE_TYPE_CATEGORIES } from '../models/Vehicle.js';
 import {
   cancelRideByAdmin,
   emitToDriver,
@@ -6597,6 +6597,18 @@ const normalizeLuggageCapacity = (value) => {
   return Number.isFinite(count) && count > 0 ? count : 0;
 };
 
+const normalizeLuxuryTier = (value) => {
+  const tier = String(value || '').trim().toLowerCase();
+  return LUXURY_TIERS.includes(tier) ? tier : '';
+};
+
+// Accepts an array or a comma-separated string from the admin form.
+const normalizeVehicleAmenities = (value) =>
+  (Array.isArray(value) ? value : String(value || '').split(','))
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+
 export const listVehicleTypes = async (queryParams = {}) => {
   const query = {};
   if (queryParams.transport_type) {
@@ -6606,7 +6618,7 @@ export const listVehicleTypes = async (queryParams = {}) => {
       : { $in: [normalizedTransportType, 'both'] };
   }
   const items = await Vehicle.find(query)
-    .select('name short_description description transport_type dispatch_type icon_types category is_luxury delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity luggage_capacity image icon map_icon status active createdAt updatedAt')
+    .select('name short_description description transport_type dispatch_type icon_types category is_luxury delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity luggage_capacity luxury_tier amenities image icon map_icon status active createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean();
   const results = items.map((item) => ({
@@ -6615,6 +6627,8 @@ export const listVehicleTypes = async (queryParams = {}) => {
     is_luxury: Boolean(item.is_luxury || resolveVehicleCategory(item) === 'luxury'),
     category: resolveVehicleCategory(item),
     luggage_capacity: Number(item.luggage_capacity || 0),
+    luxury_tier: item.luxury_tier || '',
+    amenities: Array.isArray(item.amenities) ? item.amenities : [],
     icon: item.map_icon || item.icon || item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
@@ -6648,6 +6662,8 @@ export const listVehicleCatalog = async () => {
     is_luxury: Boolean(item.is_luxury || resolveVehicleCategory(item) === 'luxury'),
     category: resolveVehicleCategory(item),
     luggage_capacity: Number(item.luggage_capacity || 0),
+    luxury_tier: item.luxury_tier || '',
+    amenities: Array.isArray(item.amenities) ? item.amenities : [],
     icon: item.map_icon || item.icon || item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
@@ -6714,6 +6730,8 @@ export const getVehicleTypeById = async (id) => {
     is_luxury: Boolean(item.is_luxury || resolveVehicleCategory(item) === 'luxury'),
     category: resolveVehicleCategory(item),
     luggage_capacity: Number(item.luggage_capacity || 0),
+    luxury_tier: item.luxury_tier || '',
+    amenities: Array.isArray(item.amenities) ? item.amenities : [],
     icon: item.map_icon || item.icon || item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
     delivery_category: item.delivery_category || '',
@@ -6736,7 +6754,7 @@ export const listPublicVehicleCatalog = async () => {
   }
 
   const items = await Vehicle.find()
-    .select('name short_description description transport_type dispatch_type icon_types category is_luxury delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity luggage_capacity image icon map_icon status active')
+    .select('name short_description description transport_type dispatch_type icon_types category is_luxury delivery_category delivery_distance_pricing parcel_limits allowed_for_student_ride service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity luggage_capacity luxury_tier amenities image icon map_icon status active')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -6752,6 +6770,8 @@ export const listPublicVehicleCatalog = async () => {
     is_luxury: Boolean(item.is_luxury || resolveVehicleCategory(item) === 'luxury'),
     category: resolveVehicleCategory(item),
     luggage_capacity: Number(item.luggage_capacity || 0),
+    luxury_tier: item.luxury_tier || '',
+    amenities: Array.isArray(item.amenities) ? item.amenities : [],
     delivery_category: item.delivery_category || '',
     delivery_distance_pricing: normalizeDeliveryDistancePricing(item.delivery_distance_pricing),
     parcel_limits: normalizeParcelLimits(item.parcel_limits),
@@ -6843,6 +6863,8 @@ export const createVehicleType = async (payload) => {
     is_luxury: Boolean(payload.is_luxury || normalizeVehicleCategoryInput(payload.category) === 'luxury'),
     capacity: Number(payload.capacity || 0),
     luggage_capacity: normalizeLuggageCapacity(payload.luggage_capacity),
+    luxury_tier: normalizeLuxuryTier(payload.luxury_tier),
+    amenities: normalizeVehicleAmenities(payload.amenities),
     size: payload.size ?? '',
     is_taxi: payload.is_taxi || transportType,
     is_accept_share_ride: Number(payload.is_accept_share_ride || 0) ? 1 : 0,
@@ -6920,6 +6942,12 @@ export const updateVehicleType = async (id, payload) => {
 
   if (payload.luggage_capacity !== undefined) {
     vehicle.luggage_capacity = normalizeLuggageCapacity(payload.luggage_capacity);
+  }
+  if (payload.luxury_tier !== undefined) {
+    vehicle.luxury_tier = normalizeLuxuryTier(payload.luxury_tier);
+  }
+  if (payload.amenities !== undefined) {
+    vehicle.amenities = normalizeVehicleAmenities(payload.amenities);
   }
   if (payload.image !== undefined) {
     vehicle.image = payload.image ?? '';

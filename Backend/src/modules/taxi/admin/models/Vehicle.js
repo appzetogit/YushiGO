@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 
 const { ObjectId } = mongoose.Schema.Types;
 
+export const LUXURY_TIERS = ['premium_sedan', 'luxury_sedan', 'premium_suv', 'luxury_suv', 'premium_mpv'];
+
 const VEHICLE_ICON_TYPES = [
   'car',
   'bike',
@@ -92,6 +94,17 @@ const vehicleSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+    },
+    // Luxury Car module tier; '' for non-luxury vehicles.
+    luxury_tier: {
+      type: String,
+      enum: ['', ...LUXURY_TIERS],
+      default: '',
+    },
+    // Shown on vehicle cards, e.g. "Leather seats", "Bottled water".
+    amenities: {
+      type: [String],
+      default: [],
     },
     size: {
       type: String,

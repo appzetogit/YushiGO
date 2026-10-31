@@ -40,6 +40,16 @@ import trucksImg from '@/assets/images/delivery/trucks.png';
 import bikeImg from '@/assets/images/delivery/bike.png';
 import moversImg from '@/assets/images/delivery/movers.png';
 
+// Luxury Car module tiers (Vehicle.luxury_tier on the backend).
+const LUXURY_TIER_OPTIONS = [
+  { value: '', label: 'Not set' },
+  { value: 'premium_sedan', label: 'Premium Sedan' },
+  { value: 'luxury_sedan', label: 'Luxury Sedan' },
+  { value: 'premium_suv', label: 'Premium SUV' },
+  { value: 'luxury_suv', label: 'Luxury SUV' },
+  { value: 'premium_mpv', label: 'Premium MPV' },
+];
+
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition-all focus:border-yellow-400 focus:ring-2 focus:ring-yellow-100';
 const labelClass = 'mb-2 block text-[12px] font-bold text-slate-700';
 
@@ -172,6 +182,8 @@ const buildVehicleFormData = (selectedVehicle = {}) => ({
   category: String(selectedVehicle.category || '') === 'car' ? 'taxi' : String(selectedVehicle.category || ''),
   is_luxury: Boolean(selectedVehicle.is_luxury || String(selectedVehicle.category || '').toLowerCase() === 'luxury'),
   luggage_capacity: Number(selectedVehicle.luggage_capacity || 0),
+  luxury_tier: selectedVehicle.luxury_tier || '',
+  amenities: Array.isArray(selectedVehicle.amenities) ? selectedVehicle.amenities.join(', ') : '',
   image: selectedVehicle.image || '',
   map_icon: selectedVehicle.map_icon || selectedVehicle.icon || selectedVehicle.image || '',
   capacity: Number(selectedVehicle.capacity || 0),
@@ -228,6 +240,8 @@ const defaultFormData = {
   map_icon: '',
   capacity: 0,
   luggage_capacity: 0,
+  luxury_tier: '',
+  amenities: '',
   size: '',
   is_taxi: 'taxi',
   is_accept_share_ride: 0,
@@ -611,6 +625,11 @@ const VehicleType = ({ mode: propMode }) => {
         map_icon: formData.map_icon || '',
         capacity: Number(formData.capacity || 0),
         luggage_capacity: Number(formData.luggage_capacity || 0),
+        luxury_tier: formData.is_luxury || formData.category === 'luxury' ? formData.luxury_tier || '' : '',
+        amenities: String(formData.amenities || '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
         size: formData.size,
         is_taxi: normalizeTaxiMode(formData.is_taxi || formData.transport_type),
         is_accept_share_ride: Number(formData.is_accept_share_ride || 0),
@@ -1425,6 +1444,29 @@ const VehicleType = ({ mode: propMode }) => {
                 <span className="block text-xs text-slate-500 font-normal">Enable to display this vehicle in the Luxury Module flow in user apps</span>
               </span>
             </label>
+            {Boolean(formData.is_luxury || formData.category === 'luxury') && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-sm font-medium text-slate-700">
+                  Luxury tier
+                  <select value={formData.luxury_tier || ''} onChange={(e) => updateForm('luxury_tier', e.target.value)} className={inputClass}>
+                    {LUXURY_TIER_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm font-medium text-slate-700">
+                  Amenities (comma separated)
+                  <input
+                    value={formData.amenities || ''}
+                    onChange={(e) => updateForm('amenities', e.target.value)}
+                    placeholder="Leather seats, Bottled water, Phone charger"
+                    className={inputClass}
+                  />
+                </label>
+              </div>
+            )}
             <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
