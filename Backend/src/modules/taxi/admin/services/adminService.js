@@ -5289,6 +5289,16 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
     update.registerFor = normalizeDriverRegisterFor(transportTypeValue);
   }
 
+  // Service categories are multi-select in the admin edit form; without this the
+  // edit saved only onboarding and the driver kept their old single category.
+  const serviceCategoriesValue = payload.serviceCategories ?? payload.service_categories;
+  if (serviceCategoriesValue !== undefined) {
+    update.serviceCategories = normalizeDriverServiceCategories(
+      serviceCategoriesValue,
+      update.registerFor || transportTypeValue || 'taxi',
+    );
+  }
+
   const vehicleTypeId =
     payload.vehicle_type_id ?? payload.vehicleTypeId ?? payload.vehicleType?._id ?? payload.vehicleType?.id;
   if (vehicleTypeId !== undefined) {
