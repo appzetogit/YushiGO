@@ -345,6 +345,14 @@ const fileToDataUrl = (file) =>
     reader.readAsDataURL(file);
   });
 
+// Built-in icons are bundled asset URLs; the API stores map icons as data URIs.
+const assetToDataUrl = async (source) => {
+  if (!source || String(source).startsWith('data:')) return source || '';
+  const response = await fetch(source);
+  if (!response.ok) return '';
+  return fileToDataUrl(await response.blob());
+};
+
 const StatusToggle = ({ active, onToggle }) => (
   <button
     type="button"
@@ -607,6 +615,11 @@ const VehicleType = ({ mode: propMode }) => {
     setErrorMessage('');
 
     try {
+      // The preview falls back to the built-in icon for the icon type when none is
+      // uploaded. Save that image too, so the apps show exactly what the preview
+      // shows instead of their own different fallback art.
+      const mapIcon = formData.map_icon || (await assetToDataUrl(mapIconPreview));
+
       if (showsDeliveryCategorySelector && !formData.delivery_category) {
         throw new Error('Choose a delivery category for this delivery-enabled vehicle type.');
       }
@@ -621,8 +634,8 @@ const VehicleType = ({ mode: propMode }) => {
         category: formData.is_luxury && (!formData.category || formData.category === 'taxi') ? 'luxury' : formData.category,
         is_luxury: Boolean(formData.is_luxury || formData.category === 'luxury'),
         image: formData.image || '',
-        icon: formData.map_icon || '',
-        map_icon: formData.map_icon || '',
+        icon: mapIcon,
+        map_icon: mapIcon,
         capacity: Number(formData.capacity || 0),
         luggage_capacity: Number(formData.luggage_capacity || 0),
         luxury_tier: formData.is_luxury || formData.category === 'luxury' ? formData.luxury_tier || '' : '',
