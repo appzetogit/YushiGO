@@ -4451,7 +4451,10 @@ export const listMyBusBookings = async (req, res) => {
 };
 
 export const getSetPrices = asyncHandler(async (req, res) => {
-  const data = await listSetPrices(req.query || {}, null);
+  // The app prices every vehicle from this one call, so return the whole list
+  // (the shared lister defaults to 10 per page, which dropped older prices and
+  // left those vehicles showing another vehicle's fare).
+  const data = await listSetPrices({ limit: 100, ...(req.query || {}) }, null);
   res.status(200).json({ success: true, ...data });
 });
 
