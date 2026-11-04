@@ -1729,6 +1729,33 @@ A ride only reaches drivers of the requested vehicle type, plus any types the ad
 type) and Kings on "Bike Go" (taxi), so they don't see each other's rides. The admin either moves
 Rudra to "Bike Go", or adds "Go Parcel" to Bike Go's supported types.
 
+## 10e. Map icons, luxury station / hourly / full day
+
+Added 4 Nov 2026.
+
+**Map icons (both apps).** `GET /users/vehicle-map-icons` (no login) →
+`{ results: [ { vehicleTypeId, name, icon_types, map_icon } ] }`. Only active vehicle types that
+have an icon are listed. `map_icon` is a URL or a base64 data URI.
+
+**New trip purposes.** `POST /rides` also accepts `tripPurpose` values `station`, `hourly` and `day`:
+
+```json
+{ "tripPurpose": "hourly", "hours": 6 }
+{ "tripPurpose": "day", "days": 2 }
+```
+
+- `station` is priced like any other point-to-point ride.
+- `hours` (1–24) is required for `hourly`; `days` (1–30) is required for `day`.
+- **For `hourly` and `day` the server calculates the fare and ignores `fare` from the app:** rate ×
+  hours (or days), plus km above the allowance at `price_per_distance`, plus `service_tax`.
+- `400` when the car has no rate for that package (*"This car is not available for hourly
+  booking"*) or the booking is under its minimum (*"This car has a minimum booking of 4 hours"*).
+
+`GET /users/set-prices` now returns `hourly_price`, `hourly_min_hours`, `hourly_included_km` (per
+hour), `daily_price` and `daily_included_km` (per day), set under **Admin → Set Prices → Chauffeur
+Packages**. A rate of `0` means the car isn't offered for that package. `tripDetails` on the ride and
+in the driver's `rideRequest` now includes `hours` and `days`.
+
 ## 11. Support and chat (both apps)
 
 **Tickets** — `user`, `driver`, `owner`:

@@ -2087,6 +2087,11 @@ const serializeSetPrice = (item) => ({
   outstation_base_distance: item.outstation_base_distance ?? 0,
   outstation_price_per_distance: item.outstation_price_per_distance ?? 0,
   outstation_time_price: item.outstation_time_price ?? 0,
+  hourly_price: item.hourly_price ?? 0,
+  hourly_min_hours: item.hourly_min_hours ?? 0,
+  hourly_included_km: item.hourly_included_km ?? 0,
+  daily_price: item.daily_price ?? 0,
+  daily_included_km: item.daily_included_km ?? 0,
   free_waiting_before: item.free_waiting_before,
   free_waiting_after: item.free_waiting_after,
 
@@ -6815,6 +6820,22 @@ export const listPublicVehicleCatalog = async () => {
   return payload;
 };
 
+/** Marker art per vehicle type, for the apps' maps: only what a marker needs. */
+export const listPublicVehicleMapIcons = async () => {
+  const { results } = await listPublicVehicleCatalog();
+
+  return {
+    results: results
+      .filter((item) => item.active && item.map_icon)
+      .map((item) => ({
+        vehicleTypeId: item.id,
+        name: item.name,
+        icon_types: item.icon_types,
+        map_icon: item.map_icon,
+      })),
+  };
+};
+
 export const listPublicRentalVehicleCatalog = async () => {
   const items = await RentalVehicleType.find({
     active: true,
@@ -7101,6 +7122,11 @@ export const listSetPrices = async (queryArgs = {}, currentAdmin = null) => {
       'outstation_base_distance',
       'outstation_price_per_distance',
       'outstation_time_price',
+      'hourly_price',
+      'hourly_min_hours',
+      'hourly_included_km',
+      'daily_price',
+      'daily_included_km',
       'createdAt',
       'updatedAt',
     ].join(' '))
@@ -7175,6 +7201,11 @@ export const listSetPrices = async (queryArgs = {}, currentAdmin = null) => {
       outstation_base_distance: Number(item.outstation_base_distance ?? 0),
       outstation_price_per_distance: Number(item.outstation_price_per_distance ?? 0),
       outstation_time_price: Number(item.outstation_time_price ?? 0),
+      hourly_price: Number(item.hourly_price ?? 0),
+      hourly_min_hours: Number(item.hourly_min_hours ?? 0),
+      hourly_included_km: Number(item.hourly_included_km ?? 0),
+      daily_price: Number(item.daily_price ?? 0),
+      daily_included_km: Number(item.daily_included_km ?? 0),
       updatedAt: item.updatedAt,
     };
   });
@@ -7476,6 +7507,11 @@ export const createSetPrice = async (payload, currentAdmin = null) => {
     outstation_base_distance: Number(payload.outstation_base_distance ?? 0),
     outstation_price_per_distance: Number(payload.outstation_price_per_distance ?? 0),
     outstation_time_price: Number(payload.outstation_time_price ?? 0),
+    hourly_price: Number(payload.hourly_price ?? 0),
+    hourly_min_hours: Number(payload.hourly_min_hours ?? 0),
+    hourly_included_km: Number(payload.hourly_included_km ?? 0),
+    daily_price: Number(payload.daily_price ?? 0),
+    daily_included_km: Number(payload.daily_included_km ?? 0),
     free_waiting_before: Number(payload.free_waiting_before ?? 0),
     free_waiting_after: Number(payload.free_waiting_after ?? 0),
 
@@ -7522,6 +7558,7 @@ export const updateSetPrice = async (id, payload, currentAdmin = null) => {
     'base_price', 'base_distance', 'price_per_distance', 'time_price',
     'waiting_charge', 'outstation_base_price', 'outstation_base_distance',
     'outstation_price_per_distance', 'outstation_time_price',
+    'hourly_price', 'hourly_min_hours', 'hourly_included_km', 'daily_price', 'daily_included_km',
     'free_waiting_before', 'free_waiting_after',
     'enable_shared_ride', 'enable_ride_sharing', 'price_per_seat',
     'shared_price_per_distance', 'shared_cancel_fee',
@@ -7547,6 +7584,11 @@ export const updateSetPrice = async (id, payload, currentAdmin = null) => {
     'outstation_base_distance',
     'outstation_price_per_distance',
     'outstation_time_price',
+    'hourly_price',
+    'hourly_min_hours',
+    'hourly_included_km',
+    'daily_price',
+    'daily_included_km',
     'free_waiting_before',
     'free_waiting_after',
     'price_per_seat',

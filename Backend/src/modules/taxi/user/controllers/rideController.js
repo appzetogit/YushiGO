@@ -346,6 +346,8 @@ export const createRide = async (req, res) => {
       passengers: req.body.passengers,
       luggage: req.body.luggage,
       purpose: req.body.tripPurpose,
+      hours: req.body.hours,
+      days: req.body.days,
     },
   });
 

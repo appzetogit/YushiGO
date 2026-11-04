@@ -176,6 +176,14 @@ const setPriceSchema = new mongoose.Schema(
       type: Number,
       default: null,
     },
+    // Chauffeur packages (luxury hourly / full day). A rate of 0 means the vehicle
+    // is not offered for that package. Km above the included allowance are charged
+    // at price_per_distance.
+    hourly_price: { type: Number, default: 0, min: 0 },
+    hourly_min_hours: { type: Number, default: 0, min: 0 },
+    hourly_included_km: { type: Number, default: 0, min: 0 }, // per hour
+    daily_price: { type: Number, default: 0, min: 0 },
+    daily_included_km: { type: Number, default: 0, min: 0 }, // per day
     outstation_base_price: {
       type: Number,
       default: 0,
