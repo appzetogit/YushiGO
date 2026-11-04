@@ -427,12 +427,54 @@ const normalizeStudentSafetyPayload = (studentSafety = {}) => {
   };
 };
 
-export const TRIP_PURPOSES = ['airport', 'business', 'wedding', 'outstation'];
+export const TRIP_PURPOSES = ['airport', 'business', 'wedding', 'outstation', 'station', 'hourly', 'day'];
+const PACKAGE_TRIP_PURPOSES = ['hourly', 'day'];
+const MAX_PACKAGE_HOURS = 24;
+const MAX_PACKAGE_DAYS = 30;
+
+/**
+ * Fare of a chauffeur package, always from the admin's rates and never from the
+ * app: rate x hours (or days), plus km beyond the included allowance at the normal
+ * per-km price, plus service tax.
+ */
+export const calculatePackageFare = ({ pricing, purpose, hours, days, distanceKm = 0 }) => {
+  const isHourly = purpose === 'hourly';
+  const rate = Number((isHourly ? pricing?.hourly_price : pricing?.daily_price) || 0);
+  if (rate <= 0) {
+    throw new ApiError(400, `This car is not available for ${isHourly ? 'hourly' : 'full-day'} booking`);
+  }
+
+  const minHours = Number(pricing?.hourly_min_hours || 0);
+  if (isHourly && hours < minHours) {
+    throw new ApiError(400, `This car has a minimum booking of ${minHours} hours`);
+  }
+
+  const units = isHourly ? hours : days;
+  const includedKm = Number((isHourly ? pricing?.hourly_included_km : pricing?.daily_included_km) || 0) * units;
+  const extraKm = Math.max(0, Number(distanceKm || 0) - includedKm);
+  const packageFare = rate * units;
+  const extraFare = extraKm * Number(pricing?.price_per_distance || 0);
+  const tax = (packageFare + extraFare) * (Number(pricing?.service_tax || 0) / 100);
+
+  return { packageFare, includedKm, extraKm, extraFare, tax, total: Math.round(packageFare + extraFare + tax) };
+};
+
+const straightLineKm = ([fromLng, fromLat] = [], [toLng, toLat] = []) => {
+  const toRadians = (value) => (Number(value) * Math.PI) / 180;
+  const deltaLat = toRadians(toLat - fromLat);
+  const deltaLng = toRadians(toLng - fromLng);
+  const haversine = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(toRadians(fromLat)) * Math.cos(toRadians(toLat)) * Math.sin(deltaLng / 2) ** 2;
+  const km = 2 * 6371 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+  return Number.isFinite(km) ? km : 0;
+};
 
 export const serializeTripDetails = (ride = {}) => ({
   passengers: ride?.tripDetails?.passengers ?? null,
   luggage: ride?.tripDetails?.luggage ?? null,
   purpose: ride?.tripDetails?.purpose || '',
+  hours: ride?.tripDetails?.hours ?? null,
+  days: ride?.tripDetails?.days ?? null,
 });
 
 /**
@@ -441,11 +483,11 @@ export const serializeTripDetails = (ride = {}) => ({
  */
 export const normalizeTripDetails = (input = {}, vehicle = null) => {
   const details = input && typeof input === 'object' ? input : {};
-  const readCount = (value, field, min) => {
+  const readCount = (value, field, min, max = 100) => {
     if (value === undefined || value === null || value === '') return null;
     const count = Number(value);
-    if (!Number.isInteger(count) || count < min || count > 100) {
-      throw new ApiError(400, `${field} must be a whole number of at least ${min}`);
+    if (!Number.isInteger(count) || count < min || count > max) {
+      throw new ApiError(400, `${field} must be a whole number from ${min} to ${max}`);
     }
     return count;
   };
@@ -469,7 +511,16 @@ export const normalizeTripDetails = (input = {}, vehicle = null) => {
     throw new ApiError(400, `This vehicle takes ${bags} bag(s); choose a bigger vehicle for ${luggage}`);
   }
 
-  return { passengers, luggage, purpose };
+  const hours = purpose === 'hourly' ? readCount(details.hours, 'hours', 1, MAX_PACKAGE_HOURS) : null;
+  const days = purpose === 'day' ? readCount(details.days, 'days', 1, MAX_PACKAGE_DAYS) : null;
+  if (purpose === 'hourly' && hours === null) {
+    throw new ApiError(400, 'hours is required for an hourly booking');
+  }
+  if (purpose === 'day' && days === null) {
+    throw new ApiError(400, 'days is required for a full-day booking');
+  }
+
+  return { passengers, luggage, purpose, hours, days };
 };
 
 const normalizeIntercityPayload = (intercity = {}) => ({
@@ -1040,7 +1091,7 @@ export const createRideRecord = async ({
 
   await clearUserActiveRideIfPresent(user);
 
-  const safeFare = Number(fare);
+  let safeFare = Number(fare);
   const safeEstimatedDistanceMeters = Math.max(0, Number(estimatedDistanceMeters || 0));
   const safeEstimatedDurationMinutes = Math.max(0, Number(estimatedDurationMinutes || 0));
 
@@ -1085,6 +1136,16 @@ export const createRideRecord = async ({
     transportType: normalizedTransportType,
     vehicleTypeId: primaryVehicleTypeId,
   });
+  if (PACKAGE_TRIP_PURPOSES.includes(normalizedTripDetails.purpose)) {
+    // The app sends the route length, so it can't be shorter than the straight line.
+    safeFare = calculatePackageFare({
+      pricing: pricingRule,
+      purpose: normalizedTripDetails.purpose,
+      hours: normalizedTripDetails.hours,
+      days: normalizedTripDetails.days,
+      distanceKm: Math.max(safeEstimatedDistanceMeters / 1000, straightLineKm(pickupCoords, dropCoords)),
+    }).total;
+  }
   const normalizedPaymentMethod = normalizeRidePaymentMethod(paymentMethod);
   const resolvedRequestedPaymentMethod = allowedPaymentMethods.includes(normalizedPaymentMethod)
     ? normalizedPaymentMethod

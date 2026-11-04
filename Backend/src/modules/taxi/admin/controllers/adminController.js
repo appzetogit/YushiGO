@@ -689,6 +689,9 @@ export const getVehicleTypeById = asyncHandler(async (req, res) =>
 export const getPublicVehicleTypeCatalog = asyncHandler(async (_req, res) =>
   ok(res, await adminService.listPublicVehicleCatalog()),
 );
+export const getPublicVehicleMapIcons = asyncHandler(async (_req, res) =>
+  ok(res, await adminService.listPublicVehicleMapIcons()),
+);
 export const getPublicRentalVehicleCatalog = asyncHandler(async (_req, res) =>
   ok(res, { results: await adminService.listPublicRentalVehicleCatalog() }),
 );

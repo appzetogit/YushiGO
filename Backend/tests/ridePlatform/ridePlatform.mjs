@@ -25,7 +25,7 @@ const { Vehicle } = await import('../../src/modules/taxi/admin/models/Vehicle.js
 const { Driver } = await import('../../src/modules/taxi/driver/models/Driver.js');
 const { Ride } = await import('../../src/modules/taxi/user/models/Ride.js');
 const adminService = await import('../../src/modules/taxi/admin/services/adminService.js');
-const { normalizeTripDetails } = await import('../../src/modules/taxi/services/rideService.js');
+const { calculatePackageFare, normalizeTripDetails } = await import('../../src/modules/taxi/services/rideService.js');
 const { sweepGhostDrivers } = await import('../../src/modules/taxi/driver/services/driverPresenceService.js');
 const { migrateVehicleCategories } = await import('../../scripts/migrateVehicleCategories.js');
 
@@ -105,14 +105,14 @@ console.log('trip details');
 
 const sedanDoc = await Vehicle.findById(sedan._id).lean();
 await check('passengers, luggage and purpose are read', async () => {
-  assert.deepEqual(normalizeTripDetails({ passengers: 3, luggage: 2, purpose: 'Airport' }, sedanDoc), { passengers: 3, luggage: 2, purpose: 'airport' });
+  assert.deepEqual(normalizeTripDetails({ passengers: 3, luggage: 2, purpose: 'Airport' }, sedanDoc), { passengers: 3, luggage: 2, purpose: 'airport', hours: null, days: null });
 });
 await check('tripPurpose is accepted as the purpose key', async () => {
   assert.equal(normalizeTripDetails({ tripPurpose: 'wedding' }, sedanDoc).purpose, 'wedding');
 });
 await check('all fields are optional', async () => {
-  assert.deepEqual(normalizeTripDetails({}, sedanDoc), { passengers: null, luggage: null, purpose: '' });
-  assert.deepEqual(normalizeTripDetails(undefined, null), { passengers: null, luggage: null, purpose: '' });
+  assert.deepEqual(normalizeTripDetails({}, sedanDoc), { passengers: null, luggage: null, purpose: '', hours: null, days: null });
+  assert.deepEqual(normalizeTripDetails(undefined, null), { passengers: null, luggage: null, purpose: '', hours: null, days: null });
 });
 await check('more passengers than seats is refused', async () => {
   await rejects(async () => normalizeTripDetails({ passengers: 5 }, sedanDoc), /seats 4/);
@@ -128,6 +128,53 @@ await check('an unknown purpose or a bad count is refused', async () => {
 await check('a parcel vehicle\'s capacity is not a seat limit', async () => {
   const parcelDoc = await Vehicle.findById(parcelBike._id).lean();
   assert.equal(normalizeTripDetails({ passengers: 1 }, { ...parcelDoc, capacity: 0 }).passengers, 1);
+});
+
+console.log('luxury station, hourly and day');
+
+await check('station is a plain purpose', async () => {
+  const details = normalizeTripDetails({ tripPurpose: 'station', hours: 3, days: 2 }, sedanDoc);
+  assert.deepEqual(details, { passengers: null, luggage: null, purpose: 'station', hours: null, days: null });
+});
+await check('hourly needs hours and day needs days, within limits', async () => {
+  assert.equal(normalizeTripDetails({ purpose: 'hourly', hours: 6 }, sedanDoc).hours, 6);
+  assert.equal(normalizeTripDetails({ purpose: 'day', days: 2 }, sedanDoc).days, 2);
+  await rejects(async () => normalizeTripDetails({ purpose: 'hourly' }, sedanDoc), /hours is required/);
+  await rejects(async () => normalizeTripDetails({ purpose: 'day' }, sedanDoc), /days is required/);
+  await rejects(async () => normalizeTripDetails({ purpose: 'hourly', hours: 25 }, sedanDoc), /hours must be/);
+  await rejects(async () => normalizeTripDetails({ purpose: 'day', days: 31 }, sedanDoc), /days must be/);
+});
+const packageRates = {
+  hourly_price: 1000, hourly_min_hours: 4, hourly_included_km: 10, daily_price: 8000, daily_included_km: 100,
+  price_per_distance: 20, service_tax: 5,
+};
+await check('hourly fare: rate x hours, extra km at the km rate, plus tax', async () => {
+  // 4 h = 4000 with 40 km included; 50 km is 10 extra = 200; 5% tax on 4200 = 210.
+  const fare = calculatePackageFare({ pricing: packageRates, purpose: 'hourly', hours: 4, distanceKm: 50 });
+  assert.equal(fare.total, 4410);
+  assert.equal(fare.extraKm, 10);
+});
+await check('day fare: nothing extra inside the allowance', async () => {
+  // 2 days = 16000 with 200 km included; 5% tax.
+  assert.equal(calculatePackageFare({ pricing: packageRates, purpose: 'day', days: 2, distanceKm: 150 }).total, 16800);
+});
+await check('no rate means the car is not offered, and the minimum hours hold', async () => {
+  await rejects(async () => calculatePackageFare({ pricing: { daily_price: 0 }, purpose: 'day', days: 1 }), /not available for full-day/);
+  await rejects(async () => calculatePackageFare({ pricing: null, purpose: 'hourly', hours: 4 }), /not available for hourly/);
+  await rejects(async () => calculatePackageFare({ pricing: packageRates, purpose: 'hourly', hours: 2 }), /minimum booking of 4/);
+});
+await check('package rates are saved and returned by the admin price API', async () => {
+  const price = await adminService.createSetPrice({
+    vehicle_type: String(sedan._id), transport_type: 'taxi', service_location_id: String(new mongoose.Types.ObjectId()),
+    base_price: 100, price_per_distance: 20, hourly_price: 1000, hourly_min_hours: 4, hourly_included_km: 10,
+    daily_price: 8000, daily_included_km: 100, payment_type: ['cash'],
+  }).catch((error) => error);
+  if (price instanceof Error) throw price;
+  assert.equal(price.hourly_price, 1000);
+  assert.equal(price.daily_included_km, 100);
+  await adminService.updateSetPrice(String(price._id), { hourly_price: 1200 });
+  const { SetPrice } = await import('../../src/modules/taxi/admin/models/SetPrice.js');
+  assert.equal((await SetPrice.findById(price._id).lean()).hourly_price, 1200);
 });
 
 console.log('ghost drivers');
@@ -186,6 +233,16 @@ const makeRide = (vehicleTypeIds) => Ride.collection.insertOne({
   otp: '1234', createdAt: new Date(), updatedAt: new Date(),
 }).then((result) => result.insertedId);
 
+await check('vehicle map icons are public and only list icons that exist', async () => {
+  await Vehicle.updateOne({ _id: taxiBike._id }, { $set: { map_icon: 'https://cdn.test/bike.png' } });
+  await adminService.updateVehicleType(String(taxiBike._id), {});
+  const result = await call('GET', '/users/vehicle-map-icons');
+  assert.equal(result.status, 200);
+  const bike = result.body.data.results.find((row) => row.vehicleTypeId === String(taxiBike._id));
+  assert.equal(bike.map_icon, 'https://cdn.test/bike.png');
+  assert.equal(bike.icon_types, 'bike');
+  assert.ok(result.body.data.results.every((row) => row.map_icon));
+});
 await check('accept and reject need a driver token', async () => {
   const rideId = new mongoose.Types.ObjectId();
   assert.equal((await call('POST', `/drivers/ride-offers/${rideId}/accept`)).status, 401);

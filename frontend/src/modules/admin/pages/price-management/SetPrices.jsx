@@ -101,6 +101,11 @@ const buildSetPriceGroupingSignature = (item = {}) => JSON.stringify({
   outstation_base_distance: Number(item.outstation_base_distance ?? 0),
   outstation_price_per_distance: Number(item.outstation_price_per_distance ?? 0),
   outstation_time_price: Number(item.outstation_time_price ?? 0),
+  hourly_price: Number(item.hourly_price ?? 0),
+  hourly_min_hours: Number(item.hourly_min_hours ?? 0),
+  hourly_included_km: Number(item.hourly_included_km ?? 0),
+  daily_price: Number(item.daily_price ?? 0),
+  daily_included_km: Number(item.daily_included_km ?? 0),
 });
 
 const collapseAllZonesSetPrices = (items = []) => {
@@ -160,6 +165,11 @@ const NON_NEGATIVE_FORM_FIELDS = new Set([
   'outstation_base_distance',
   'outstation_price_per_distance',
   'outstation_time_price',
+  'hourly_price',
+  'hourly_min_hours',
+  'hourly_included_km',
+  'daily_price',
+  'daily_included_km',
   'price_per_seat',
   'shared_price_per_distance',
   'shared_cancel_fee',
@@ -231,6 +241,11 @@ const initialFormState = {
   outstation_base_distance: '',
   outstation_price_per_distance: '',
   outstation_time_price: '',
+  hourly_price: '',
+  hourly_min_hours: '',
+  hourly_included_km: '',
+  daily_price: '',
+  daily_included_km: '',
   enable_ride_sharing: false,
   enable_shared_ride: 0,
   price_per_seat: '',
@@ -429,7 +444,12 @@ const SetPrices = ({ mode }) => {
         { name: 'Outstation Base Distance', val: formData.outstation_base_distance },
         { name: 'Outstation Price Per Distance', val: formData.outstation_price_per_distance },
         { name: 'Outstation Time Price', val: formData.outstation_time_price }
-      ] : [])
+      ] : []),
+      { name: 'Hourly Rate', val: formData.hourly_price },
+      { name: 'Minimum Hours', val: formData.hourly_min_hours },
+      { name: 'Km Included Per Hour', val: formData.hourly_included_km },
+      { name: 'Full Day Rate', val: formData.daily_price },
+      { name: 'Km Included Per Day', val: formData.daily_included_km }
     ];
     for (const field of numericFields) {
       if (field.val !== '' && Number(field.val) < 0) {
@@ -978,6 +998,26 @@ const SetPrices = ({ mode }) => {
                            <div className="flex-1"><label className={labelClass}>Out. Price/Dist</label><input type="number" className={inputClass + " py-1"} value={formData.outstation_price_per_distance} onChange={e => setFormData(p=>({...p, outstation_price_per_distance: e.target.value}))} /></div>
                         </div>
                      )}
+                  </div>
+
+                  {/* Section: Chauffeur Packages */}
+                  <div className="space-y-1 pt-1 mt-1 border-t border-gray-100">
+                     <h2 className="text-[10px] font-bold text-[#1E293B] uppercase tracking-wider">Chauffeur Packages (Luxury Hourly / Full Day)</h2>
+                     <p className="text-[10px] text-gray-500">Leave a rate at 0 if this vehicle is not offered for that package. Km above the allowance are charged at Price Per Distance.</p>
+                     <div className="grid grid-cols-2 md:grid-cols-5 gap-x-2 gap-y-1">
+                        {[
+                           ['hourly_price', 'Hourly Rate'],
+                           ['hourly_min_hours', 'Minimum Hours'],
+                           ['hourly_included_km', 'Km Included / Hour'],
+                           ['daily_price', 'Full Day Rate'],
+                           ['daily_included_km', 'Km Included / Day'],
+                        ].map(([key, label]) => (
+                           <div key={key}>
+                              <label className={labelClass}>{label}</label>
+                              <input type="number" min="0" className={inputClass + " py-1"} value={formData[key]} onChange={e => setFormData(p=>({...p, [key]: e.target.value}))} />
+                           </div>
+                        ))}
+                     </div>
                   </div>
 
                   {/* Section: Cancellation Fee */}

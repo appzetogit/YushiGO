@@ -123,9 +123,12 @@ const rideSchema = new mongoose.Schema(
       luggage: { type: Number, default: null, min: 0 },
       purpose: {
         type: String,
-        enum: ['', 'airport', 'business', 'wedding', 'outstation'],
+        enum: ['', 'airport', 'business', 'wedding', 'outstation', 'station', 'hourly', 'day'],
         default: '',
       },
+      // Length of a chauffeur package: hours for 'hourly', days for 'day'.
+      hours: { type: Number, default: null, min: 1 },
+      days: { type: Number, default: null, min: 1 },
     },
     intercity: {
       bookingId: {
